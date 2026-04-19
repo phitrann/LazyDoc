@@ -10,6 +10,41 @@ A small FastAPI + Next.js application that accepts a public GitHub repository UR
 - In-memory TTL cache on the backend
 - Basic tests for URL validation, analyzer output, and API behavior
 
+## Requirement Coverage
+
+The table below maps the implementation to the requirements in `GTLC Technical Exercise - GitHub Repository.pdf`.
+
+| Requirement | Status | Notes |
+|---|---|---|
+| Input field for public GitHub repository URL | Complete | Implemented in the main page form. |
+| "Research" button to trigger analysis | Complete | Single action triggers documentation/research flow. |
+| Clean, readable report | Complete | Multi-section report UI with clear headings and cards. |
+| Repository overview: name, description, owner, stars, forks, last updated | Complete | Present in overview metrics and summary. |
+| Project insights: main languages | Complete | Language percentages are included. |
+| Project insights: dependency overview | Complete (heuristic) | Uses common dependency-file detection. |
+| Project insights: project structure summary | Complete | Includes file count and top directories. |
+| Activity and health: recent commits/activity | Complete | Shows 7-day and 30-day commit signals. |
+| Activity and health: contributor overview | Complete | Includes total and active contributors. |
+| Bonus: license detection | Complete | License availability and name are included when available. |
+| Bonus: security/risk observations | Complete | Generated and rendered in the documentation intelligence section. |
+| Bonus: README summarization | Complete | Uses README extraction and summarization flow. |
+| Bonus: AI-generated insights/recommendations | Complete | Local-model-backed recommendations with deterministic fallback. |
+| Edge cases: invalid URL / not found / rate limit / upstream failure | Complete | Handled with normalized API errors and user-facing messages. |
+| Performance considerations | Partial | In-memory TTL cache is implemented; persistence/queueing are not. |
+| Deliverable: source code repository | Complete | Current repository includes frontend, backend, tests, and docs. |
+| Deliverable: run instructions | Complete | Backend/frontend setup and demo instructions are documented. |
+| Deliverable: design decisions, trade-offs, AI usage, future improvements | Complete | Explicit sections are included in this README. |
+
+## Submission Task Board
+
+| Task | Priority | Status | Next Action |
+|---|---|---|---|
+| Keep README aligned with current endpoints and env vars | High | In progress | Ensure docs mention both `/api/research` and `/api/documentation`, and local model env vars. |
+| Add one realistic happy-path integration test for docs flow | High | Partial | Add test path that validates full response shape from docs endpoint. |
+| Improve dependency overview depth | Medium | Partial | Parse common manifests (`package.json`, `pyproject.toml`, `requirements.txt`) for richer insights. |
+| Improve user-facing fallback messaging when local models are unavailable | Medium | Partial | Surface fallback warnings clearly in UI and backend warning payloads. |
+| Add progressive generation UX | Low | Not started | Add stage/progress updates for long-running repository analysis. |
+
 ## Run the backend
 
 ```bash
