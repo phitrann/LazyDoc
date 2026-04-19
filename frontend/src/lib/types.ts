@@ -41,3 +41,23 @@ export type ResearchResponse = {
   data: ResearchData;
   warnings: string[];
 };
+
+export type DocumentationSection = {
+  title: string;
+  summary: string;
+  content: string[];
+};
+
+export type DocumentationData = ResearchData & {
+  sections: DocumentationSection[];
+  markdown: string;
+  readme_summary: string | null;
+  recommendations: string[];
+  risk_observations: string[];
+};
+
+export type DocumentationResponse = {
+  status: "success" | "partial";
+  data: DocumentationData;
+  warnings: string[];
+};

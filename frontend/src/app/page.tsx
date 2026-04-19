@@ -1,124 +1,135 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 
-import { analyzeRepository } from "@/lib/api";
-import type { ResearchResponse } from "@/lib/types";
-import { MetricCard } from "@/components/MetricCard";
-import { SectionCard } from "@/components/SectionCard";
-import { StatusBanner } from "@/components/StatusBanner";
+type FeaturedRepo = {
+  handle: string;
+  description: string;
+  stars: string;
+  url: string;
+};
+
+const featuredRepos: FeaturedRepo[] = [
+  {
+    handle: "phitrann / LazyDoc",
+    description: "GitHub Repository Research Tool with FastAPI backend and Next.js frontend.",
+    stars: "local",
+    url: "https://github.com/phitrann/LazyDoc",
+  },
+  {
+    handle: "microsoft / vscode",
+    description: "Visual Studio Code",
+    stars: "159.4k",
+    url: "https://github.com/microsoft/vscode",
+  },
+  {
+    handle: "huggingface / transformers",
+    description: "State-of-the-art machine learning for PyTorch, TensorFlow, and JAX.",
+    stars: "152.4k",
+    url: "https://github.com/huggingface/transformers",
+  },
+  {
+    handle: "microsoft / playwright",
+    description: "Framework for web testing and automation across Chromium, Firefox, and WebKit.",
+    stars: "66.5k",
+    url: "https://github.com/microsoft/playwright",
+  },
+  {
+    handle: "karpathy / nanoGPT",
+    description: "A simple and fast repository for training and finetuning medium-sized GPTs.",
+    stars: "50.1k",
+    url: "https://github.com/karpathy/nanoGPT",
+  },
+  {
+    handle: "langchain-ai / langchain",
+    description: "Building applications with LLMs through composability.",
+    stars: "33.6k",
+    url: "https://github.com/langchain-ai/langchain",
+  },
+  {
+    handle: "openai / openai-python",
+    description: "Official Python library for the OpenAI API.",
+    stars: "32.5k",
+    url: "https://github.com/openai/openai-python",
+  },
+];
 
 export default function HomePage() {
-  const [repositoryUrl, setRepositoryUrl] = useState("https://github.com/vercel/next.js");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<ResearchResponse | null>(null);
+  const router = useRouter();
+  const [repositoryUrl, setRepositoryUrl] = useState("https://github.com/phitrann/LazyDoc");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setLoading(true);
-    setError(null);
-    setReport(null);
-
-    try {
-      const result = await analyzeRepository(repositoryUrl);
-      setReport(result);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Something went wrong.");
-    } finally {
-      setLoading(false);
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed) {
+      return;
     }
+    router.push(`/report?repo=${encodeURIComponent(trimmed)}`);
   }
 
-  const overview = report?.data.overview;
-  const insights = report?.data.insights;
-  const activity = report?.data.activity;
-  const structure = report?.data.structure;
-
   return (
-    <main className="page-shell">
-      <section className="hero-card">
-        <p className="eyebrow">GitHub Repository Research Tool</p>
-        <h1>Start simple, then add depth only when it helps the report.</h1>
-        <p className="hero-copy">
-          Enter a public GitHub repository URL, press Research, and get a concise report with overview, insights,
-          activity, and structure signals.
-        </p>
+    <div className="landing-shell">
+      <header className="top-nav">
+        <div className="top-nav-inner">
+          <div className="brand">LazyDoc</div>
+          <div className="nav-meta">
+            <p>Repository research for technical due diligence</p>
+            <button type="submit" form="landing-search-form">
+              Research
+            </button>
+          </div>
+        </div>
+      </header>
 
-        <form className="search-form" onSubmit={handleSubmit}>
-          <label className="field-label" htmlFor="repository-url">
-            Repository URL
-          </label>
-          <div className="search-row">
+      <main className="landing-content">
+        <section className="hero-search">
+          <h1>Which GitHub repository should LazyDoc research?</h1>
+          <form id="landing-search-form" className="hero-search-form" onSubmit={handleSubmit}>
             <input
-              id="repository-url"
               type="url"
               value={repositoryUrl}
               onChange={(event) => setRepositoryUrl(event.target.value)}
-              placeholder="https://github.com/owner/repo"
+              placeholder="Paste a public repository URL"
             />
-            <button type="submit" disabled={loading}>
-              {loading ? "Researching..." : "Research"}
-            </button>
-          </div>
-        </form>
-
-        {error ? <StatusBanner kind="error" message={error} /> : null}
-        {report?.warnings?.length ? <StatusBanner kind="warning" message={report.warnings.join(" ")} /> : null}
-      </section>
-
-      {overview && insights && activity && structure ? (
-        <section className="report-grid">
-          <SectionCard title="Repository Overview" description="Core metadata and ownership.">
-            <div className="metric-grid">
-              <MetricCard label="Name" value={overview.name} />
-              <MetricCard label="Owner" value={overview.owner} />
-              <MetricCard label="Stars" value={String(overview.stars)} />
-              <MetricCard label="Forks" value={String(overview.forks)} />
-              <MetricCard label="Updated" value={new Date(overview.last_updated).toLocaleDateString()} />
-            </div>
-            <p className="section-note">{overview.description || "No description provided."}</p>
-          </SectionCard>
-
-          <SectionCard title="Project Insights" description="Languages and dependency hints.">
-            <div className="metric-grid">
-              <MetricCard label="Primary language" value={insights.primary_language || "Unknown"} />
-              <MetricCard label="Has license" value={insights.has_license ? "Yes" : "No"} />
-              <MetricCard label="Dependency files" value={insights.dependency_files.length ? insights.dependency_files.join(", ") : "None detected"} />
-            </div>
-            <div className="tag-row">
-              {insights.languages.map((language) => (
-                <span key={language.name} className="tag">
-                  {language.name} {language.percentage}%
-                </span>
-              ))}
-            </div>
-          </SectionCard>
-
-          <SectionCard title="Activity & Health" description="Recent commit and contributor signals.">
-            <div className="metric-grid">
-              <MetricCard label="Commits last 7 days" value={String(activity.recent_commits_last_7_days)} />
-              <MetricCard label="Commits last 30 days" value={String(activity.recent_commits_last_30_days)} />
-              <MetricCard label="Contributors" value={String(activity.total_contributors)} />
-              <MetricCard label="Active contributors" value={String(activity.active_contributors_last_30_days)} />
-            </div>
-            <p className="section-note">
-              {activity.last_commit_date ? `Last commit: ${new Date(activity.last_commit_date).toLocaleString()}` : "No commit data detected."}
-            </p>
-          </SectionCard>
-
-          <SectionCard title="Structure Summary" description="Lightweight repository shape summary.">
-            <div className="metric-grid">
-              <MetricCard label="Files" value={String(structure.total_files)} />
-              <MetricCard label="README" value={structure.has_readme ? "Present" : "Missing"} />
-              <MetricCard label="License" value={structure.has_license ? "Present" : "Missing"} />
-            </div>
-            <p className="section-note">
-              Top directories: {structure.top_directories.length ? structure.top_directories.join(", ") : "None detected"}
-            </p>
-          </SectionCard>
+          </form>
         </section>
-      ) : null}
-    </main>
+
+        <section className="repo-grid-section">
+          <div className="repo-grid">
+            <button type="button" className="repo-card add-repo" onClick={() => setRepositoryUrl("https://github.com/owner/repo")}>
+              <span className="repo-add-icon">+</span>
+              <span>Add repo</span>
+            </button>
+
+            {featuredRepos.map((repo) => (
+              <button
+                key={repo.handle}
+                type="button"
+                className="repo-card"
+                onClick={() => router.push(`/report?repo=${encodeURIComponent(repo.url)}`)}
+              >
+                <div>
+                  <h3>{repo.handle}</h3>
+                  <p>{repo.description}</p>
+                </div>
+                <div className="repo-card-footer">
+                  <span>{repo.stars}</span>
+                  <span aria-hidden="true">→</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <footer className="landing-footer">
+          <h2>What is LazyDoc?</h2>
+          <p>
+            LazyDoc turns public repositories into structured reports with overview metrics, project insights,
+            activity health signals, and AI-assisted recommendations.
+          </p>
+        </footer>
+      </main>
+    </div>
   );
 }
