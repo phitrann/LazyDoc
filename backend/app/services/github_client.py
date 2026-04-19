@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 
 import httpx
@@ -72,3 +73,12 @@ class GitHubClient:
     async def get_repo_tree(self, owner: str, repo: str, branch: str) -> list[dict]:
         data = await self._request(f"/repos/{owner}/{repo}/git/trees/{branch}", params={"recursive": "1"})
         return list(data.get("tree", []))
+
+    async def get_readme(self, owner: str, repo: str) -> str | None:
+        data = await self._request(f"/repos/{owner}/{repo}/readme")
+        content = data.get("content")
+        if not content:
+            return None
+        if data.get("encoding") == "base64":
+            return base64.b64decode(content.replace("\n", "")).decode("utf-8", errors="replace")
+        return str(content)

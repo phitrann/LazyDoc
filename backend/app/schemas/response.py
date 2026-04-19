@@ -61,3 +61,27 @@ class APIErrorResponse(BaseModel):
     error_code: str
     message: str
     retry_after_seconds: int | None = None
+
+
+class DocumentationSection(BaseModel):
+    title: str
+    summary: str
+    content: list[str]
+
+
+class DocumentationData(BaseModel):
+    overview: Overview
+    insights: Insights
+    activity: Activity
+    structure: Structure
+    sections: list[DocumentationSection]
+    markdown: str
+    readme_summary: str | None = None
+    recommendations: list[str] = []
+    risk_observations: list[str] = []
+
+
+class DocumentationSuccessResponse(BaseModel):
+    status: Literal["success", "partial"]
+    data: DocumentationData
+    warnings: list[str] = []
