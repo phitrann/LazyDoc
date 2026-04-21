@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { GitHubPatInput } from "@/components/GitHubPatInput";
 import { MetricCard } from "@/components/MetricCard";
@@ -10,7 +12,7 @@ import { RateLimitBanner } from "@/components/RateLimitBanner";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBanner } from "@/components/StatusBanner";
 import { generateDocumentation, streamDocumentationAiSection } from "@/lib/api";
-import type { DocumentationResponse, RateLimit } from "@/lib/types";
+import type { DocumentationResponse } from "@/lib/types";
 
 const defaultRepository = "https://github.com/phitrann/LazyDoc";
 
@@ -181,6 +183,7 @@ export function ReportClient() {
     aiStreaming || report?.data.readme_summary || report?.data.recommendations.length || report?.data.risk_observations.length
   );
   const hasGeneratedSections = Boolean(report?.data.sections.length);
+  const readmeSummary = useMemo(() => report?.data.readme_summary?.trim(), [report]);
 
   const tocItems = useMemo(
     () => [
@@ -374,7 +377,12 @@ export function ReportClient() {
                   </button>
                 </div>
                 {aiStreamingStatus ? <p className="section-note">{aiStreamingStatus}</p> : null}
-                {report.data.readme_summary ? <p className="section-note">README summary: {report.data.readme_summary}</p> : null}
+                {readmeSummary ? (
+                  <div className="markdown-render markdown-compact">
+                    <h3>README Summary</h3>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{readmeSummary}</ReactMarkdown>
+                  </div>
+                ) : null}
                 {report.data.recommendations.length ? (
                   <div className="content-list">
                     <h3>Recommendations</h3>
@@ -404,7 +412,13 @@ export function ReportClient() {
                   Copy Markdown
                 </button>
               </div>
-              <pre className="markdown-preview">{markdownPreview}</pre>
+              {markdownPreview ? (
+                <div className="markdown-render markdown-preview-rendered">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdownPreview}</ReactMarkdown>
+                </div>
+              ) : (
+                <p className="section-note">No markdown generated yet.</p>
+              )}
             </SectionCard>
 
             {hasGeneratedSections ? (

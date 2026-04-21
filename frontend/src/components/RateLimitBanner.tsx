@@ -48,67 +48,43 @@ export function RateLimitBanner({ rateLimit, hasGithubToken = false }: RateLimit
   const percentageUsed = ((rateLimit.limit - rateLimit.remaining) / rateLimit.limit) * 100;
   const isWarning = percentageUsed > 75;
   const isAtLimit = rateLimit.remaining === 0;
+  const isUnauthenticatedLimit = !hasGithubToken && rateLimit.limit <= 60;
+  const toneClass = isAtLimit ? "error" : isWarning ? "warning" : "info";
+  const progressToneClass = isAtLimit ? "error" : isWarning ? "warning" : "info";
 
   return (
-    <div
-      className={`rounded-lg border p-3 ${
-        isAtLimit
-          ? "border-red-300 bg-red-50"
-          : isWarning
-            ? "border-orange-300 bg-orange-50"
-            : "border-blue-300 bg-blue-50"
-      }`}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div
-            className={`text-sm font-semibold ${
-              isAtLimit ? "text-red-900" : isWarning ? "text-orange-900" : "text-blue-900"
-            }`}
-          >
-            {isAtLimit
-              ? "Rate Limit Exceeded"
-              : isWarning
-                ? "Rate Limit Warning"
-                : "API Rate Limit"}
-          </div>
-          <div className="mt-1 text-xs text-gray-600">
-            {isAtLimit ? (
-              <span>
-                Your limit will reset in {timeRemaining || "loading..."}.{" "}
-                {!hasGithubToken && "Add a GitHub PAT above to get 5,000 requests/hr."}
-              </span>
-            ) : (
-              <span>
-                {rateLimit.remaining} of {rateLimit.limit} requests remaining
-                {timeRemaining && ` • Resets in ${timeRemaining}`}
-              </span>
-            )}
-          </div>
-
-          {/* Progress bar */}
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-300">
-            <div
-              className={`h-full transition-all ${
-                isAtLimit
-                  ? "bg-red-500"
-                  : isWarning
-                    ? "bg-orange-500"
-                    : "bg-blue-500"
-              }`}
-              style={{ width: `${Math.min(percentageUsed, 100)}%` }}
-            />
-          </div>
-        </div>
-
-        {!hasGithubToken && !isAtLimit && (
-          <a
-            href="#github-pat-input"
-            className="flex-shrink-0 whitespace-nowrap rounded bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-200"
-          >
-            Add PAT
+    <div className={`rate-limit-banner ${toneClass}`}>
+      <div className="rate-limit-header-row">
+        <p className="rate-limit-title">
+          {isAtLimit ? "GitHub Rate Limit Exceeded" : isWarning ? "GitHub Rate Limit Warning" : "GitHub API Rate Limit"}
+        </p>
+        {!hasGithubToken && !isAtLimit ? (
+          <a href="#github-pat-input" className="rate-limit-cta">
+            Use GitHub PAT
           </a>
+        ) : null}
+      </div>
+
+      <p className="rate-limit-meta">
+        {isAtLimit ? (
+          <>
+            Your limit will reset in {timeRemaining || "loading..."}.
+            {!hasGithubToken ? " Add a GitHub PAT above to get 5,000 requests/hr." : ""}
+          </>
+        ) : (
+          <>
+            {rateLimit.remaining} / {rateLimit.limit} requests remaining
+            {timeRemaining ? ` • Resets in ${timeRemaining}` : ""}
+            {isUnauthenticatedLimit ? " • Unauthenticated mode" : ""}
+          </>
         )}
+      </p>
+
+      <div className="rate-limit-progress">
+        <div
+          className={`rate-limit-progress-fill ${progressToneClass}`}
+          style={{ width: `${Math.min(percentageUsed, 100)}%` }}
+        />
       </div>
     </div>
   );
