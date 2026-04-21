@@ -26,12 +26,14 @@ async def generate_documentation(
             content={"status": "error", "error_code": error.error_code, "message": error.message},
         )
 
-    # Use provided token if available, otherwise fall back to configured token
-    if x_github_token and hasattr(generator, '_client') and generator._client:
-        generator._client.set_token(x_github_token)
-
     try:
-        data = await generator.generate(owner, repo, force_refresh=request.force_regenerate)
+        data = await generator.generate(
+            owner,
+            repo,
+            force_refresh=request.force_regenerate,
+            ai_section=request.ai_section,
+            github_token=x_github_token,
+        )
     except APIError as exc:
         payload = {"status": "error", "error_code": exc.error_code, "message": exc.message}
         if exc.retry_after_seconds is not None:
@@ -69,13 +71,15 @@ async def stream_documentation_ai(
             content={"status": "error", "error_code": error.error_code, "message": error.message},
         )
 
-    # Use provided token if available, otherwise fall back to configured token
-    if x_github_token and hasattr(generator, '_client') and generator._client:
-        generator._client.set_token(x_github_token)
-
     async def event_stream():
         try:
-            async for event in generator.stream_ai_section(owner, repo, force_refresh=request.force_regenerate):
+            async for event in generator.stream_ai_section(
+                owner,
+                repo,
+                force_refresh=request.force_regenerate,
+                ai_section=request.ai_section,
+                github_token=x_github_token,
+            ):
                 event_type = str(event.get("event", "message"))
                 payload = {key: value for key, value in event.items() if key != "event"}
                 yield _to_sse(event_type, payload)

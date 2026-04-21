@@ -1,22 +1,19 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type FeaturedRepo = {
-  handle: string;
-  description: string;
-  stars: string;
-  url: string;
+import { fetchTrendingRepositories } from "@/lib/api";
+import type { TrendingRepository } from "@/lib/types";
+
+const lazyDocRepo: TrendingRepository = {
+  handle: "phitrann / LazyDoc",
+  description: "GitHub Repository Research Tool with FastAPI backend and Next.js frontend.",
+  stars: "local",
+  url: "https://github.com/phitrann/LazyDoc",
 };
 
-const featuredRepos: FeaturedRepo[] = [
-  {
-    handle: "phitrann / LazyDoc",
-    description: "GitHub Repository Research Tool with FastAPI backend and Next.js frontend.",
-    stars: "local",
-    url: "https://github.com/phitrann/LazyDoc",
-  },
+const fallbackTrendingRepos: TrendingRepository[] = [
   {
     handle: "microsoft / vscode",
     description: "Visual Studio Code",
@@ -58,6 +55,49 @@ const featuredRepos: FeaturedRepo[] = [
 export default function HomePage() {
   const router = useRouter();
   const [repositoryUrl, setRepositoryUrl] = useState("https://github.com/phitrann/LazyDoc");
+  const [trendingRepos, setTrendingRepos] = useState<TrendingRepository[]>(fallbackTrendingRepos);
+  const [isTrendingLoading, setIsTrendingLoading] = useState(true);
+  const [trendingError, setTrendingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTrending() {
+      try {
+        setIsTrendingLoading(true);
+        setTrendingError(null);
+        const repositories = await fetchTrendingRepositories();
+        if (!isMounted || !repositories.length) {
+          return;
+        }
+
+        const withoutLazyDoc = repositories.filter((repo) => repo.url.toLowerCase() !== lazyDocRepo.url.toLowerCase());
+        setTrendingRepos(withoutLazyDoc.length ? withoutLazyDoc : fallbackTrendingRepos);
+      } catch {
+        if (isMounted) {
+          setTrendingError("Unable to load live trending data. Showing fallback list.");
+          setTrendingRepos(fallbackTrendingRepos);
+        }
+      } finally {
+        if (isMounted) {
+          setIsTrendingLoading(false);
+        }
+      }
+    }
+
+    void loadTrending();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const trendingCountLabel = useMemo(() => {
+    if (isTrendingLoading) {
+      return "Refreshing trending repositories...";
+    }
+    return `Showing ${trendingRepos.length} trending repositories from GitHub search.`;
+  }, [isTrendingLoading, trendingRepos.length]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -96,13 +136,37 @@ export default function HomePage() {
         </section>
 
         <section className="repo-grid-section">
-          <div className="repo-grid">
-            <button type="button" className="repo-card add-repo" onClick={() => setRepositoryUrl("https://github.com/owner/repo")}>
-              <span className="repo-add-icon">+</span>
-              <span>Add repo</span>
-            </button>
+          <div className="repo-section-header">
+            <div>
+              <p className="eyebrow">Featured</p>
+              <h2>LazyDoc</h2>
+            </div>
+            <p>Use the repository that powers this submission, then browse current trending examples.</p>
+          </div>
 
-            {featuredRepos.map((repo) => (
+          <button type="button" className="repo-card repo-card-featured" onClick={() => router.push(`/report?repo=${encodeURIComponent(lazyDocRepo.url)}`)}>
+            <div>
+              <h3>{lazyDocRepo.handle}</h3>
+              <p>{lazyDocRepo.description}</p>
+            </div>
+            <div className="repo-card-footer">
+              <span>{lazyDocRepo.stars}</span>
+              <span aria-hidden="true">→</span>
+            </div>
+          </button>
+
+          <div className="repo-section-header repo-section-header-trending">
+            <div>
+              <p className="eyebrow">Trending repositories</p>
+              <h2>Popular public projects</h2>
+            </div>
+            <p>{trendingCountLabel}</p>
+          </div>
+
+          {trendingError ? <p className="repo-grid-warning">{trendingError}</p> : null}
+
+          <div className="repo-grid">
+            {trendingRepos.map((repo) => (
               <button
                 key={repo.handle}
                 type="button"

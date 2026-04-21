@@ -21,4 +21,8 @@ def parse_repository_url(repository_url: str) -> tuple[str, str]:
     owner, repo = parts
     if repo.endswith(".git"):
         repo = repo[:-4]
-    return owner.lower(), repo.lower()
+    owner = owner.strip().lower()
+    repo = repo.strip().lower()
+    if not owner or not repo:
+        raise InvalidRepositoryURLError("Repository URL must include a valid owner and repository name.")
+    return owner, repo

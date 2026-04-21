@@ -21,12 +21,8 @@ async def research_repository(
         error = APIError("INVALID_URL", str(exc), 400)
         return JSONResponse(status_code=error.status_code, content={"status": "error", "error_code": error.error_code, "message": error.message})
 
-    # Use provided token if available, otherwise fall back to configured token
-    if x_github_token and hasattr(analyzer, '_client') and analyzer._client:
-        analyzer._client.set_token(x_github_token)
-
     try:
-        data = await analyzer.analyze(owner, repo)
+        data = await analyzer.analyze(owner, repo, github_token=x_github_token)
     except APIError as exc:
         payload = {"status": "error", "error_code": exc.error_code, "message": exc.message}
         if exc.retry_after_seconds is not None:

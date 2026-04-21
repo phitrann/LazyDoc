@@ -1,6 +1,29 @@
-import type { DocumentationResponse, ResearchResponse } from "@/lib/types";
+import type { DocumentationAiSection, DocumentationResponse, ResearchResponse, TrendingRepository } from "@/lib/types";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+type StreamPayload = {
+  stage?: string;
+  message?: string;
+  field?: string;
+  token?: string;
+  data?: DocumentationAiStreamUpdate;
+  cached?: boolean;
+  error_code?: string;
+  retry_after_seconds?: number;
+};
+
+async function readErrorPayload(response: Response): Promise<{ message?: string; error_code?: string; retry_after_seconds?: number }> {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text) as { message?: string; error_code?: string; retry_after_seconds?: number };
+  } catch {
+    return { message: text };
+  }
+}
 
 function getHeaders(githubToken?: string): HeadersInit {
   const headers: HeadersInit = {
@@ -19,14 +42,15 @@ export async function analyzeRepository(repositoryUrl: string, githubToken?: str
     body: JSON.stringify({ repository_url: repositoryUrl }),
   });
 
-  const payload = await response.json();
-
   if (!response.ok) {
+    const payload = await readErrorPayload(response);
     const error = new Error(payload.message || "Request failed.") as Error & { code?: string; retryAfterSeconds?: number };
     error.code = payload.error_code;
     error.retryAfterSeconds = payload.retry_after_seconds;
     throw error;
   }
+
+  const payload = await response.json();
 
   return payload as ResearchResponse;
 }
@@ -38,16 +62,32 @@ export async function generateDocumentation(repositoryUrl: string, forceRegenera
     body: JSON.stringify({ repository_url: repositoryUrl, force_regenerate: forceRegenerate }),
   });
 
-  const payload = await response.json();
-
   if (!response.ok) {
+    const payload = await readErrorPayload(response);
     const error = new Error(payload.message || "Request failed.") as Error & { code?: string; retryAfterSeconds?: number };
     error.code = payload.error_code;
     error.retryAfterSeconds = payload.retry_after_seconds;
     throw error;
   }
 
+  const payload = await response.json();
+
   return payload as DocumentationResponse;
+}
+
+export async function fetchTrendingRepositories(): Promise<TrendingRepository[]> {
+  const response = await fetch(`${apiBaseUrl}/api/trending`, {
+    method: "GET",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const payload = await readErrorPayload(response);
+    throw new Error(payload.message || "Failed to load trending repositories.");
+  }
+
+  const payload = (await response.json()) as { data?: TrendingRepository[] };
+  return payload.data || [];
 }
 
 export type DocumentationAiStreamUpdate = {
@@ -85,17 +125,18 @@ function parseSseChunk(chunk: string): Array<{ event: string; data: string }> {
 export async function streamDocumentationAiSection(
   repositoryUrl: string,
   forceRegenerate = false,
+  aiSection: DocumentationAiSection = "all",
   handlers: DocumentationAiStreamHandlers = {},
   githubToken?: string
 ): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/api/documentation/stream`, {
     method: "POST",
     headers: getHeaders(githubToken),
-    body: JSON.stringify({ repository_url: repositoryUrl, force_regenerate: forceRegenerate }),
+    body: JSON.stringify({ repository_url: repositoryUrl, force_regenerate: forceRegenerate, ai_section: aiSection }),
   });
 
   if (!response.ok) {
-    const payload = await response.json();
+    const payload = await readErrorPayload(response);
     const error = new Error(payload.message || "Request failed.") as Error & { code?: string; retryAfterSeconds?: number };
     error.code = payload.error_code;
     error.retryAfterSeconds = payload.retry_after_seconds;
@@ -122,16 +163,12 @@ export async function streamDocumentationAiSection(
         if (!event.data) {
           continue;
         }
-        const payload = JSON.parse(event.data) as {
-          stage?: string;
-          message?: string;
-          field?: string;
-          token?: string;
-          data?: DocumentationAiStreamUpdate;
-          cached?: boolean;
-          error_code?: string;
-          retry_after_seconds?: number;
-        };
+        let payload: StreamPayload;
+        try {
+          payload = JSON.parse(event.data) as StreamPayload;
+        } catch {
+          throw new Error(event.data || "Streaming request failed.");
+        }
 
         if (event.event === "stage" && payload.stage && payload.message) {
           handlers.onStage?.(payload.stage, payload.message);

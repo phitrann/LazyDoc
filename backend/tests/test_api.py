@@ -21,8 +21,10 @@ class FakeAnalyzer:
     def __init__(self, mode: str = "success") -> None:
         self.mode = mode
         self._client = MockGitHubClient()
+        self.last_github_token: str | None = None
 
-    async def analyze(self, owner: str, repo: str) -> dict:
+    async def analyze(self, owner: str, repo: str, github_token: str | None = None) -> dict:
+        self.last_github_token = github_token
         if self.mode == "error":
             raise APIError("RATE_LIMIT_EXCEEDED", "GitHub API rate limit exceeded.", 403, retry_after_seconds=120)
         return {
@@ -63,10 +65,21 @@ class FakeDocumentationGenerator:
     def __init__(self, mode: str = "success") -> None:
         self.mode = mode
         self.last_force_refresh = False
+        self.last_ai_section = "all"
+        self.last_github_token: str | None = None
         self._client = MockGitHubClient()
 
-    async def generate(self, owner: str, repo: str, force_refresh: bool = False) -> dict:
+    async def generate(
+        self,
+        owner: str,
+        repo: str,
+        force_refresh: bool = False,
+        ai_section: str = "all",
+        github_token: str | None = None,
+    ) -> dict:
         self.last_force_refresh = force_refresh
+        self.last_ai_section = ai_section
+        self.last_github_token = github_token
         if self.mode == "error":
             raise APIError("RATE_LIMIT_EXCEEDED", "GitHub API rate limit exceeded.", 403, retry_after_seconds=120)
         return {
@@ -113,8 +126,17 @@ class FakeDocumentationGenerator:
             "risk_observations": ["Low bus factor"],
         }
 
-    async def stream_ai_section(self, owner: str, repo: str, force_refresh: bool = False):
+    async def stream_ai_section(
+        self,
+        owner: str,
+        repo: str,
+        force_refresh: bool = False,
+        ai_section: str = "all",
+        github_token: str | None = None,
+    ):
         self.last_force_refresh = force_refresh
+        self.last_ai_section = ai_section
+        self.last_github_token = github_token
         if self.mode == "error":
             raise APIError("RATE_LIMIT_EXCEEDED", "GitHub API rate limit exceeded.", 403, retry_after_seconds=120)
         yield {
@@ -162,18 +184,33 @@ client = TestClient(app)
 
 
 def test_research_endpoint_success() -> None:
-    app.dependency_overrides[get_analyzer] = lambda: FakeAnalyzer("success")
-    response = client.post("/api/research", json={"repository_url": "https://github.com/owner/repo"})
+    fake = FakeAnalyzer("success")
+    app.dependency_overrides[get_analyzer] = lambda: fake
+    response = client.post(
+        "/api/research",
+        json={"repository_url": "https://github.com/owner/repo"},
+        headers={"X-GitHub-Token": "ghp_test123"},
+    )
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
     assert response.json()["data"]["overview"]["name"] == "repo"
+    assert fake.last_github_token == "ghp_test123"
 
 
 def test_research_endpoint_invalid_url() -> None:
     app.dependency_overrides[get_analyzer] = lambda: FakeAnalyzer("success")
     response = client.post("/api/research", json={"repository_url": "https://example.com/owner/repo"})
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_URL"
+
+
+def test_research_endpoint_rejects_nested_repo_path() -> None:
+    app.dependency_overrides[get_analyzer] = lambda: FakeAnalyzer("success")
+    response = client.post("/api/research", json={"repository_url": "https://github.com/owner/repo/issues/1"})
     app.dependency_overrides.clear()
 
     assert response.status_code == 400
@@ -191,8 +228,13 @@ def test_research_endpoint_rate_limited() -> None:
 
 
 def test_documentation_endpoint_success() -> None:
-    app.dependency_overrides[get_documentation_generator] = lambda: FakeDocumentationGenerator("success")
-    response = client.post("/api/documentation", json={"repository_url": "https://github.com/owner/repo"})
+    fake = FakeDocumentationGenerator("success")
+    app.dependency_overrides[get_documentation_generator] = lambda: fake
+    response = client.post(
+        "/api/documentation",
+        json={"repository_url": "https://github.com/owner/repo"},
+        headers={"X-GitHub-Token": "ghp_test123"},
+    )
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
@@ -200,6 +242,22 @@ def test_documentation_endpoint_success() -> None:
     assert payload["status"] == "success"
     assert payload["data"]["markdown"] == "# Example"
     assert payload["data"]["sections"][0]["title"] == "Repository Overview"
+    assert fake.last_github_token == "ghp_test123"
+    assert fake.last_ai_section == "all"
+
+
+def test_documentation_endpoint_can_target_single_ai_section() -> None:
+    fake = FakeDocumentationGenerator("success")
+    app.dependency_overrides[get_documentation_generator] = lambda: fake
+    response = client.post(
+        "/api/documentation",
+        json={"repository_url": "https://github.com/owner/repo", "ai_section": "readme_summary"},
+        headers={"X-GitHub-Token": "ghp_test123"},
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert fake.last_ai_section == "readme_summary"
 
 
 def test_documentation_endpoint_invalid_url() -> None:
@@ -232,6 +290,33 @@ def test_documentation_endpoint_force_regenerate() -> None:
 
     assert response.status_code == 200
     assert fake.last_force_refresh is True
+
+
+def test_documentation_stream_endpoint_forwards_github_token() -> None:
+    fake = FakeDocumentationGenerator("success")
+    app.dependency_overrides[get_documentation_generator] = lambda: fake
+    response = client.post(
+        "/api/documentation/stream",
+        json={"repository_url": "https://github.com/owner/repo"},
+        headers={"X-GitHub-Token": "ghp_test123"},
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert fake.last_github_token == "ghp_test123"
+
+
+def test_documentation_stream_endpoint_can_target_single_ai_section() -> None:
+    fake = FakeDocumentationGenerator("success")
+    app.dependency_overrides[get_documentation_generator] = lambda: fake
+    response = client.post(
+        "/api/documentation/stream",
+        json={"repository_url": "https://github.com/owner/repo", "ai_section": "risk_observations"},
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert fake.last_ai_section == "risk_observations"
 
 
 def test_documentation_stream_endpoint_success() -> None:

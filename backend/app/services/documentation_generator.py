@@ -4,10 +4,11 @@ import asyncio
 import json
 from math import sqrt
 from textwrap import shorten
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Callable, Literal
 
 from app.core.cache import TTLCache
-from app.services.github_client import GitHubClient
+from app.schemas.error import APIError
+from app.services.github_client import GitHubClient, github_cache_scope
 from app.services.local_models import LocalEmbeddingClient, LocalLLMClient
 from app.services.repo_analyzer import RepoAnalyzer
 
@@ -27,10 +28,24 @@ class DocumentationGenerator:
         self._embedding_client = embedding_client
         self._cache = cache
 
-    async def generate(self, owner: str, repo: str, force_refresh: bool = False) -> dict:
-        return await self._generate_report(owner, repo, force_refresh)
+    async def generate(
+        self,
+        owner: str,
+        repo: str,
+        force_refresh: bool = False,
+        ai_section: Literal["all", "readme_summary", "recommendations", "risk_observations"] = "all",
+        github_token: str | None = None,
+    ) -> dict:
+        return await self._generate_report(owner, repo, force_refresh, ai_section=ai_section, github_token=github_token)
 
-    async def stream_ai_section(self, owner: str, repo: str, force_refresh: bool = False) -> AsyncIterator[dict]:
+    async def stream_ai_section(
+        self,
+        owner: str,
+        repo: str,
+        force_refresh: bool = False,
+        ai_section: Literal["all", "readme_summary", "recommendations", "risk_observations"] = "all",
+        github_token: str | None = None,
+    ) -> AsyncIterator[dict]:
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         def emit(event: dict) -> None:
@@ -38,7 +53,14 @@ class DocumentationGenerator:
 
         async def produce() -> None:
             try:
-                await self._generate_report(owner, repo, force_refresh, emit=emit)
+                await self._generate_report(
+                    owner,
+                    repo,
+                    force_refresh,
+                    ai_section=ai_section,
+                    emit=emit,
+                    github_token=github_token,
+                )
             except Exception as exc:  # noqa: BLE001 - convert upstream failures into stream events.
                 if hasattr(exc, "error_code") and hasattr(exc, "message"):
                     queue.put_nowait(
@@ -69,9 +91,34 @@ class DocumentationGenerator:
         owner: str,
         repo: str,
         force_refresh: bool,
+        ai_section: Literal["all", "readme_summary", "recommendations", "risk_observations"] = "all",
         emit: Callable[[dict], None] | None = None,
+        github_token: str | None = None,
     ) -> dict:
-        cache_key = f"docs:{owner}/{repo}"
+        cache_key = self._cache_key(owner, repo, github_token)
+        if ai_section != "all":
+            cached = None if force_refresh else self._cache.get(cache_key)
+            if cached is None:
+                cached = await self._generate_full_report(owner, repo, force_refresh, github_token=github_token)
+            return await self._regenerate_ai_section(
+                owner,
+                repo,
+                cached,
+                ai_section,
+                emit=emit,
+                github_token=github_token,
+            )
+        return await self._generate_full_report(owner, repo, force_refresh, emit=emit, github_token=github_token)
+
+    async def _generate_full_report(
+        self,
+        owner: str,
+        repo: str,
+        force_refresh: bool,
+        emit: Callable[[dict], None] | None = None,
+        github_token: str | None = None,
+    ) -> dict:
+        cache_key = self._cache_key(owner, repo, github_token)
         if not force_refresh:
             cached = self._cache.get(cache_key)
             if cached is not None:
@@ -93,11 +140,14 @@ class DocumentationGenerator:
                 return cached
 
         warnings: list[str] = []
-        analysis = await self._analyzer.analyze(owner, repo)
+        analysis = await self._analyzer.analyze(owner, repo, github_token=github_token)
+        if not isinstance(analysis, dict):
+            raise APIError("UPSTREAM_UNAVAILABLE", "Repository analysis returned no data.", 502)
+
         analysis_warnings = list(analysis.pop("warnings", [])) if isinstance(analysis.get("warnings"), list) else []
         if emit:
             emit({"event": "stage", "stage": "analysis_complete", "message": "Repository analysis complete."})
-        readme = await self._safe_call(warnings, self._client.get_readme(owner, repo), None)
+        readme = await self._safe_call(warnings, self._client.get_readme(owner, repo, github_token=github_token), None)
         if emit:
             emit({"event": "stage", "stage": "readme_loaded", "message": "README content loaded."})
 
@@ -118,7 +168,7 @@ class DocumentationGenerator:
         sections = self._sections(analysis, readme_summary, recommendations, risk_observations)
         markdown = self._markdown(analysis, sections, readme_summary, recommendations, risk_observations)
 
-        combined_warnings = [*analysis_warnings, *warnings]
+        combined_warnings = self._dedupe_strings([*analysis_warnings, *warnings])
         result = {
             **analysis,
             "sections": sections,
@@ -153,6 +203,93 @@ class DocumentationGenerator:
         except Exception as exc:  # noqa: BLE001 - convert external errors to report warnings.
             warnings.append(str(exc))
             return fallback
+
+    def _dedupe_strings(self, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(item for item in values if item))
+
+    def _analysis_from_report(self, report: dict) -> dict:
+        analysis = {
+            "overview": report["overview"],
+            "insights": report["insights"],
+            "activity": report["activity"],
+            "structure": report["structure"],
+        }
+        if report.get("code_health") is not None:
+            analysis["code_health"] = report["code_health"]
+        return analysis
+
+    def _cache_key(self, owner: str, repo: str, github_token: str | None) -> str:
+        scope = github_cache_scope(github_token)
+        return f"docs:{scope}:{owner}/{repo}"
+
+    async def _regenerate_ai_section(
+        self,
+        owner: str,
+        repo: str,
+        base_report: dict,
+        ai_section: Literal["all", "readme_summary", "recommendations", "risk_observations"],
+        emit: Callable[[dict], None] | None = None,
+        github_token: str | None = None,
+    ) -> dict:
+        analysis = self._analysis_from_report(base_report)
+        warnings = list(base_report.get("warnings", []))
+        readme_summary = base_report.get("readme_summary")
+        recommendations = list(base_report.get("recommendations", []))
+        risk_observations = list(base_report.get("risk_observations", []))
+        cache_key = self._cache_key(owner, repo, github_token)
+
+        if ai_section == "readme_summary":
+            if emit:
+                emit({"event": "stage", "stage": "readme_refresh", "message": "Refreshing README summary."})
+            readme = await self._safe_call(warnings, self._client.get_readme(owner, repo, github_token=github_token), None)
+            readme_summary = await self._summarize_readme(readme, analysis, warnings, emit=emit)
+            if emit:
+                emit({"event": "ai_update", "data": {"readme_summary": readme_summary}})
+        elif ai_section == "recommendations":
+            if emit:
+                emit({"event": "stage", "stage": "recommendations_refresh", "message": "Refreshing recommendations."})
+            recommendations = await self._generate_recommendations_only(analysis, readme_summary, warnings)
+            if emit:
+                emit({"event": "ai_update", "data": {"recommendations": recommendations}})
+        elif ai_section == "risk_observations":
+            if emit:
+                emit({"event": "stage", "stage": "risk_refresh", "message": "Refreshing security and risk observations."})
+            risk_observations = await self._generate_risk_observations_only(analysis, readme_summary, warnings)
+            if emit:
+                emit({"event": "ai_update", "data": {"risk_observations": risk_observations}})
+        else:
+            raise APIError("INVALID_REQUEST", "Unsupported AI section requested.", 400)
+
+        sections = self._sections(analysis, readme_summary, recommendations, risk_observations)
+        markdown = self._markdown(analysis, sections, readme_summary, recommendations, risk_observations)
+        combined_warnings = self._dedupe_strings([*warnings, *list(base_report.get("warnings", []))])
+        result = {
+            **base_report,
+            "sections": sections,
+            "markdown": markdown,
+            "readme_summary": readme_summary,
+            "recommendations": recommendations,
+            "risk_observations": risk_observations,
+        }
+        if combined_warnings:
+            result["warnings"] = combined_warnings
+        self._cache.set(cache_key, result)
+        if emit:
+            emit(
+                {
+                    "event": "complete",
+                    "data": {
+                        "readme_summary": readme_summary,
+                        "recommendations": recommendations,
+                        "risk_observations": risk_observations,
+                        "sections": sections,
+                        "markdown": markdown,
+                        "warnings": combined_warnings,
+                    },
+                    "cached": False,
+                }
+            )
+        return result
 
     async def _summarize_readme(
         self,
@@ -232,6 +369,56 @@ class DocumentationGenerator:
             warnings.append(self._model_fallback_warning("Insight generation fallback", exc))
 
         return self._recommendations(analysis, readme_summary), self._risk_observations(analysis, readme_summary)
+
+    async def _generate_recommendations_only(
+        self,
+        analysis: dict,
+        readme_summary: str | None,
+        warnings: list[str],
+    ) -> list[str]:
+        prompt = self._insights_prompt(analysis, readme_summary)
+        try:
+            raw = await self._llm_client.generate_json(
+                system_prompt=(
+                    "You generate structured repository documentation recommendations. "
+                    "Return valid JSON with key recommendations, an array of short strings."
+                ),
+                user_prompt=prompt,
+                max_tokens=220,
+            )
+            payload = json.loads(raw)
+            recommendations = [str(item).strip() for item in payload.get("recommendations", []) if str(item).strip()]
+            if recommendations:
+                return recommendations[:4]
+        except Exception as exc:  # noqa: BLE001 - local model output can be unavailable or malformed.
+            warnings.append(self._model_fallback_warning("Recommendation generation fallback", exc))
+
+        return self._recommendations(analysis, readme_summary)
+
+    async def _generate_risk_observations_only(
+        self,
+        analysis: dict,
+        readme_summary: str | None,
+        warnings: list[str],
+    ) -> list[str]:
+        prompt = self._insights_prompt(analysis, readme_summary)
+        try:
+            raw = await self._llm_client.generate_json(
+                system_prompt=(
+                    "You generate structured repository documentation security and risk observations. "
+                    "Return valid JSON with key risk_observations, an array of short strings."
+                ),
+                user_prompt=prompt,
+                max_tokens=220,
+            )
+            payload = json.loads(raw)
+            risk_observations = [str(item).strip() for item in payload.get("risk_observations", []) if str(item).strip()]
+            if risk_observations:
+                return risk_observations[:4]
+        except Exception as exc:  # noqa: BLE001 - local model output can be unavailable or malformed.
+            warnings.append(self._model_fallback_warning("Risk observation generation fallback", exc))
+
+        return self._risk_observations(analysis, readme_summary)
 
     def _model_fallback_warning(self, prefix: str, exc: Exception) -> str:
         message = str(exc).strip()
@@ -397,7 +584,7 @@ class DocumentationGenerator:
             {
                 "title": "README Summary",
                 "summary": readme_summary or "No README content was available.",
-                "content": [readme_summary or "README content was not detected or could not be summarized."],
+                "content": [],
             },
             {
                 "title": "Recommendations",
@@ -436,17 +623,5 @@ class DocumentationGenerator:
             lines.append("")
             for item in section["content"]:
                 lines.append(f"- {item}")
-            lines.append("")
-        if readme_summary:
-            lines.append("## README Summary")
-            lines.append(readme_summary)
-            lines.append("")
-        if recommendations:
-            lines.append("## Recommendations")
-            lines.extend(f"- {recommendation}" for recommendation in recommendations)
-            lines.append("")
-        if risk_observations:
-            lines.append("## Security & Risk Observations")
-            lines.extend(f"- {observation}" for observation in risk_observations)
             lines.append("")
         return "\n".join(lines).strip() + "\n"

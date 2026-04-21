@@ -48,6 +48,7 @@ class ResearchData(BaseModel):
     insights: Insights
     activity: Activity
     structure: Structure
+    code_health: dict | None = None
 
 
 class RateLimit(BaseModel):
@@ -82,6 +83,7 @@ class DocumentationData(BaseModel):
     insights: Insights
     activity: Activity
     structure: Structure
+    code_health: dict | None = None
     sections: list[DocumentationSection]
     markdown: str
     readme_summary: str | None = None

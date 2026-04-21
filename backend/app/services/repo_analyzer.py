@@ -6,7 +6,8 @@ from datetime import datetime, timezone, timedelta
 from app.core.cache import TTLCache
 from app.core.dedupe import get_dedupe
 from app.schemas.error import APIError
-from app.services.github_client import GitHubClient
+from app.services.code_health import CodeHealthAnalyzer
+from app.services.github_client import GitHubClient, github_cache_scope
 
 
 class RepoAnalyzer:
@@ -14,27 +15,32 @@ class RepoAnalyzer:
         self._client = client
         self._cache = cache
         self._dedupe = get_dedupe()
+        self._code_health = CodeHealthAnalyzer(client)
 
-    async def analyze(self, owner: str, repo: str) -> dict:
-        cache_key = f"{owner}/{repo}"
+    async def analyze(self, owner: str, repo: str, github_token: str | None = None) -> dict:
+        cache_key = self._cache_key(owner, repo, github_token)
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
         # Deduplicate concurrent requests for the same repo
         async def do_analyze() -> dict:
-            return await self._do_analyze_uncached(cache_key, owner, repo)
+            return await self._do_analyze_uncached(cache_key, owner, repo, github_token=github_token)
 
         return await self._dedupe.dedupe(cache_key, do_analyze)
 
-    async def _do_analyze_uncached(self, cache_key: str, owner: str, repo: str) -> dict:
+    async def _do_analyze_uncached(self, cache_key: str, owner: str, repo: str, github_token: str | None = None) -> dict:
 
         warnings: list[str] = []
-        repository = await self._client.get_repository(owner, repo)
-        languages = await self._safe_call(warnings, self._client.get_languages(owner, repo), {})
-        commits = await self._safe_call(warnings, self._client.get_commits(owner, repo), [])
-        contributors = await self._safe_call(warnings, self._client.get_contributors(owner, repo), [])
-        tree = await self._safe_call(warnings, self._client.get_repo_tree(owner, repo, repository["default_branch"]), [])
+        repository = await self._client.get_repository(owner, repo, github_token=github_token)
+        languages = await self._safe_call(warnings, self._client.get_languages(owner, repo, github_token=github_token), {})
+        commits = await self._safe_call(warnings, self._client.get_commits(owner, repo, github_token=github_token), [])
+        contributors = await self._safe_call(warnings, self._client.get_contributors(owner, repo, github_token=github_token), [])
+        tree = await self._safe_call(
+            warnings,
+            self._client.get_repo_tree(owner, repo, repository["default_branch"], github_token=github_token),
+            [],
+        )
 
         now = datetime.now(tz=timezone.utc)
         seven_days_ago = now - timedelta(days=7)
@@ -53,6 +59,7 @@ class RepoAnalyzer:
         top_directories = self._top_directories(tree)
         has_readme = any(entry.get("path", "").lower().startswith("readme") for entry in tree)
         has_license = bool(repository.get("license"))
+        code_health = await self._code_health.analyze(owner, repo, tree, github_token=github_token)
 
         result = {
             "overview": {
@@ -86,6 +93,10 @@ class RepoAnalyzer:
                 "top_directories": top_directories,
             },
         }
+        if code_health is not None:
+            result["code_health"] = code_health
+            warnings.extend(code_health.get("warnings", []))
+        warnings = self._dedupe_strings(warnings)
         if warnings:
             result["warnings"] = warnings
         self._cache.set(cache_key, result)
@@ -97,6 +108,13 @@ class RepoAnalyzer:
         except APIError as exc:
             warnings.append(exc.message)
             return fallback
+
+    def _cache_key(self, owner: str, repo: str, github_token: str | None) -> str:
+        scope = github_cache_scope(github_token)
+        return f"analysis:{scope}:{owner}/{repo}"
+
+    def _dedupe_strings(self, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(item for item in values if item))
 
     def _commit_date(self, commit: dict) -> datetime | None:
         date_str = (((commit or {}).get("commit") or {}).get("author") or {}).get("date")

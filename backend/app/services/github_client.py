@@ -8,6 +8,10 @@ import httpx
 from app.schemas.error import APIError
 
 
+def github_cache_scope(github_token: str | None) -> str:
+    return "authenticated" if github_token else "anonymous"
+
+
 class GitHubClient:
     def __init__(self, token: str | None, timeout_seconds: float, base_url: str, user_agent: str) -> None:
         self._token = token
@@ -22,16 +26,25 @@ class GitHubClient:
             self._headers["Authorization"] = f"Bearer {token}"
         self.last_rate_limit: dict = {}
 
-    def set_token(self, token: str) -> None:
-        """Update the GitHub token (for user-provided PATs)."""
+    def set_token(self, token: str | None) -> None:
+        """Set the default GitHub token used when no per-request PAT is provided."""
         self._token = token
-        if token:
-            self._headers["Authorization"] = f"Bearer {token}"
-        else:
-            self._headers.pop("Authorization", None)
 
-    async def _request(self, path: str, params: dict[str, str] | None = None) -> dict:
-        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout, headers=self._headers) as client:
+    def _headers_for_token(self, github_token: str | None = None) -> dict[str, str]:
+        headers = dict(self._headers)
+        token = github_token if github_token is not None else self._token
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        else:
+            headers.pop("Authorization", None)
+        return headers
+
+    async def _request(self, path: str, params: dict[str, str] | None = None, github_token: str | None = None) -> dict:
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            timeout=self._timeout,
+            headers=self._headers_for_token(github_token),
+        ) as client:
             try:
                 response = await client.get(path, params=params)
             except httpx.TimeoutException as exc:
@@ -88,29 +101,42 @@ class GitHubClient:
             return max(seconds, 0)
         return None
 
-    async def get_repository(self, owner: str, repo: str) -> dict:
-        return await self._request(f"/repos/{owner}/{repo}")
+    async def get_repository(self, owner: str, repo: str, github_token: str | None = None) -> dict:
+        return await self._request(f"/repos/{owner}/{repo}", github_token=github_token)
 
-    async def get_languages(self, owner: str, repo: str) -> dict[str, int]:
-        return await self._request(f"/repos/{owner}/{repo}/languages")
+    async def get_languages(self, owner: str, repo: str, github_token: str | None = None) -> dict[str, int]:
+        return await self._request(f"/repos/{owner}/{repo}/languages", github_token=github_token)
 
-    async def get_commits(self, owner: str, repo: str, per_page: int = 100) -> list[dict]:
-        data = await self._request(f"/repos/{owner}/{repo}/commits", params={"per_page": str(per_page)})
+    async def get_commits(self, owner: str, repo: str, per_page: int = 100, github_token: str | None = None) -> list[dict]:
+        data = await self._request(f"/repos/{owner}/{repo}/commits", params={"per_page": str(per_page)}, github_token=github_token)
         return list(data)
 
-    async def get_contributors(self, owner: str, repo: str, per_page: int = 10) -> list[dict]:
-        data = await self._request(f"/repos/{owner}/{repo}/contributors", params={"per_page": str(per_page)})
+    async def get_contributors(self, owner: str, repo: str, per_page: int = 10, github_token: str | None = None) -> list[dict]:
+        data = await self._request(f"/repos/{owner}/{repo}/contributors", params={"per_page": str(per_page)}, github_token=github_token)
         return list(data)
 
-    async def get_repo_tree(self, owner: str, repo: str, branch: str) -> list[dict]:
-        data = await self._request(f"/repos/{owner}/{repo}/git/trees/{branch}", params={"recursive": "1"})
+    async def get_repo_tree(self, owner: str, repo: str, branch: str, github_token: str | None = None) -> list[dict]:
+        data = await self._request(
+            f"/repos/{owner}/{repo}/git/trees/{branch}",
+            params={"recursive": "1"},
+            github_token=github_token,
+        )
         return list(data.get("tree", []))
 
-    async def get_readme(self, owner: str, repo: str) -> str | None:
-        data = await self._request(f"/repos/{owner}/{repo}/readme")
+    async def get_readme(self, owner: str, repo: str, github_token: str | None = None) -> str | None:
+        data = await self._request(f"/repos/{owner}/{repo}/readme", github_token=github_token)
         content = data.get("content")
         if not content:
             return None
+        if data.get("encoding") == "base64":
+            return base64.b64decode(content.replace("\n", "")).decode("utf-8", errors="replace")
+        return str(content)
+
+    async def get_file_contents(self, owner: str, repo: str, path: str, github_token: str | None = None) -> str:
+        data = await self._request(f"/repos/{owner}/{repo}/contents/{path}", github_token=github_token)
+        content = data.get("content")
+        if not content:
+            return ""
         if data.get("encoding") == "base64":
             return base64.b64decode(content.replace("\n", "")).decode("utf-8", errors="replace")
         return str(content)

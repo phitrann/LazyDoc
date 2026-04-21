@@ -3,6 +3,13 @@ export type LanguageItem = {
   percentage: number;
 };
 
+export type TrendingRepository = {
+  handle: string;
+  description: string;
+  stars: string;
+  url: string;
+};
+
 export type ResearchData = {
   overview: {
     name: string;
@@ -34,6 +41,7 @@ export type ResearchData = {
     has_license: boolean;
     top_directories: string[];
   };
+  code_health?: CodeHealth | null;
 };
 
 export type ResearchResponse = {
@@ -49,12 +57,57 @@ export type DocumentationSection = {
   content: string[];
 };
 
+export type DocumentationAiSection = "all" | "readme_summary" | "recommendations" | "risk_observations";
+
 export type DocumentationData = ResearchData & {
   sections: DocumentationSection[];
   markdown: string;
   readme_summary: string | null;
   recommendations: string[];
   risk_observations: string[];
+};
+
+export type CodeHealthFinding = {
+  id: string;
+  category: "security" | "architecture" | "maintenance";
+  rule_name: string;
+  severity: "Critical" | "High" | "Medium" | "Low";
+  confidence: "High" | "Medium" | "Low";
+  file_path: string;
+  line: number;
+  message: string;
+  suggestion: string;
+  impact_area: "Security" | "Architecture" | "Maintenance";
+  evidence: string;
+  why_it_matters: string;
+};
+
+export type CodeHealth = {
+  grade: "A" | "B" | "C" | "D" | "F" | "N/A";
+  score: number;
+  summary: string;
+  metrics: {
+    scanned_files: number;
+    source_files_detected: number;
+    security_findings: number;
+    architecture_findings: number;
+    maintenance_findings: number;
+    critical_findings: number;
+    high_findings: number;
+    medium_findings: number;
+    low_findings: number;
+    circular_dependencies: number;
+    coupling_index: number;
+    orphan_file_percent: number;
+  };
+  breakdown: Array<{
+    name: string;
+    score: number;
+    impact: number;
+    drivers: string[];
+  }>;
+  findings: CodeHealthFinding[];
+  warnings?: string[];
 };
 
 export type RateLimit = {

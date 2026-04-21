@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const backendBaseUrl = process.env.BACKEND_INTERNAL_URL || "http://127.0.0.1:8000";
+const backendBaseUrl = process.env.BACKEND_INTERNAL_URL || "http://127.0.0.1:8992";
 
 export async function POST(request: NextRequest) {
   const requestBody = await request.text();
+  const githubToken = request.headers.get("x-github-token");
 
   try {
     const upstream = await fetch(`${backendBaseUrl}/api/documentation`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(githubToken ? { "X-GitHub-Token": githubToken } : {}),
       },
       body: requestBody,
       cache: "no-store",

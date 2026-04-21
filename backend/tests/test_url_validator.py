@@ -15,6 +15,22 @@ def test_parse_repository_url_accepts_missing_scheme() -> None:
     assert repo == "repo"
 
 
+def test_parse_repository_url_accepts_git_suffix() -> None:
+    owner, repo = parse_repository_url("https://github.com/Owner/Repo.git")
+    assert owner == "owner"
+    assert repo == "repo"
+
+
 def test_parse_repository_url_rejects_bad_host() -> None:
     with pytest.raises(InvalidRepositoryURLError):
         parse_repository_url("https://example.com/owner/repo")
+
+
+def test_parse_repository_url_rejects_missing_repo_name() -> None:
+    with pytest.raises(InvalidRepositoryURLError):
+        parse_repository_url("https://github.com/owner/.git")
+
+
+def test_parse_repository_url_rejects_nested_path() -> None:
+    with pytest.raises(InvalidRepositoryURLError):
+        parse_repository_url("https://github.com/owner/repo/issues/1")
