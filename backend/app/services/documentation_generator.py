@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from math import sqrt
 from textwrap import shorten
+from typing import AsyncIterator, Callable
 
 from app.core.cache import TTLCache
 from app.services.github_client import GitHubClient
@@ -26,19 +28,93 @@ class DocumentationGenerator:
         self._cache = cache
 
     async def generate(self, owner: str, repo: str, force_refresh: bool = False) -> dict:
+        return await self._generate_report(owner, repo, force_refresh)
+
+    async def stream_ai_section(self, owner: str, repo: str, force_refresh: bool = False) -> AsyncIterator[dict]:
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+        def emit(event: dict) -> None:
+            queue.put_nowait(event)
+
+        async def produce() -> None:
+            try:
+                await self._generate_report(owner, repo, force_refresh, emit=emit)
+            except Exception as exc:  # noqa: BLE001 - convert upstream failures into stream events.
+                if hasattr(exc, "error_code") and hasattr(exc, "message"):
+                    queue.put_nowait(
+                        {
+                            "event": "error",
+                            "error_code": getattr(exc, "error_code"),
+                            "message": getattr(exc, "message"),
+                            "retry_after_seconds": getattr(exc, "retry_after_seconds", None),
+                        }
+                    )
+                else:
+                    queue.put_nowait({"event": "error", "error_code": "STREAM_FAILED", "message": str(exc)})
+            finally:
+                queue.put_nowait(None)
+
+        producer = asyncio.create_task(produce())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            await producer
+
+    async def _generate_report(
+        self,
+        owner: str,
+        repo: str,
+        force_refresh: bool,
+        emit: Callable[[dict], None] | None = None,
+    ) -> dict:
         cache_key = f"docs:{owner}/{repo}"
         if not force_refresh:
             cached = self._cache.get(cache_key)
             if cached is not None:
+                if emit:
+                    emit(
+                        {
+                            "event": "complete",
+                            "data": {
+                                "readme_summary": cached.get("readme_summary"),
+                                "recommendations": cached.get("recommendations", []),
+                                "risk_observations": cached.get("risk_observations", []),
+                                "sections": cached.get("sections", []),
+                                "markdown": cached.get("markdown", ""),
+                                "warnings": cached.get("warnings", []),
+                            },
+                            "cached": True,
+                        }
+                    )
                 return cached
 
         warnings: list[str] = []
         analysis = await self._analyzer.analyze(owner, repo)
         analysis_warnings = list(analysis.pop("warnings", [])) if isinstance(analysis.get("warnings"), list) else []
+        if emit:
+            emit({"event": "stage", "stage": "analysis_complete", "message": "Repository analysis complete."})
         readme = await self._safe_call(warnings, self._client.get_readme(owner, repo), None)
+        if emit:
+            emit({"event": "stage", "stage": "readme_loaded", "message": "README content loaded."})
 
-        readme_summary = await self._summarize_readme(readme, analysis, warnings)
+        readme_summary = await self._summarize_readme(readme, analysis, warnings, emit=emit)
+        if emit:
+            emit({"event": "ai_update", "data": {"readme_summary": readme_summary}})
         recommendations, risk_observations = await self._generate_insights(analysis, readme_summary, warnings)
+        if emit:
+            emit(
+                {
+                    "event": "ai_update",
+                    "data": {
+                        "recommendations": recommendations,
+                        "risk_observations": risk_observations,
+                    },
+                }
+            )
         sections = self._sections(analysis, readme_summary, recommendations, risk_observations)
         markdown = self._markdown(analysis, sections, readme_summary, recommendations, risk_observations)
 
@@ -54,6 +130,21 @@ class DocumentationGenerator:
         if combined_warnings:
             result["warnings"] = combined_warnings
         self._cache.set(cache_key, result)
+        if emit:
+            emit(
+                {
+                    "event": "complete",
+                    "data": {
+                        "readme_summary": readme_summary,
+                        "recommendations": recommendations,
+                        "risk_observations": risk_observations,
+                        "sections": sections,
+                        "markdown": markdown,
+                        "warnings": combined_warnings,
+                    },
+                    "cached": False,
+                }
+            )
         return result
 
     async def _safe_call(self, warnings: list[str], coroutine, fallback):
@@ -63,7 +154,13 @@ class DocumentationGenerator:
             warnings.append(str(exc))
             return fallback
 
-    async def _summarize_readme(self, readme: str | None, analysis: dict, warnings: list[str]) -> str | None:
+    async def _summarize_readme(
+        self,
+        readme: str | None,
+        analysis: dict,
+        warnings: list[str],
+        emit: Callable[[dict], None] | None = None,
+    ) -> str | None:
         if not readme:
             return None
         paragraphs = [paragraph.strip() for paragraph in readme.splitlines() if paragraph.strip()]
@@ -78,16 +175,34 @@ class DocumentationGenerator:
             f"README context:\n{context}"
         )
         try:
-            summary = await self._llm_client.generate_json(
-                system_prompt="You produce concise, accurate repository documentation summaries.",
-                user_prompt=prompt,
-                max_tokens=220,
-            )
+            summary = ""
+            if emit:
+                streamed_parts: list[str] = []
+                async for token in self._llm_client.stream_text(
+                    system_prompt="You produce concise, accurate repository documentation summaries.",
+                    user_prompt=prompt,
+                    max_tokens=220,
+                ):
+                    streamed_parts.append(token)
+                    emit({"event": "token", "field": "readme_summary", "token": token})
+                summary = "".join(streamed_parts)
+                if not summary.strip():
+                    summary = await self._llm_client.generate_json(
+                        system_prompt="You produce concise, accurate repository documentation summaries.",
+                        user_prompt=prompt,
+                        max_tokens=220,
+                    )
+            else:
+                summary = await self._llm_client.generate_json(
+                    system_prompt="You produce concise, accurate repository documentation summaries.",
+                    user_prompt=prompt,
+                    max_tokens=220,
+                )
             summary = summary.strip()
             if summary:
                 return summary
         except Exception as exc:  # noqa: BLE001 - fallback to deterministic summary when the local model is unavailable.
-            warnings.append(f"README summary model fallback: {exc}")
+            warnings.append(self._model_fallback_warning("README summary model fallback", exc))
 
         fallback = " ".join(paragraphs[:3])
         return shorten(fallback, width=420, placeholder="...")
@@ -114,9 +229,20 @@ class DocumentationGenerator:
             if recommendations or risk_observations:
                 return recommendations[:4], risk_observations[:4]
         except Exception as exc:  # noqa: BLE001 - local model output can be unavailable or malformed.
-            warnings.append(f"Insight generation fallback: {exc}")
+            warnings.append(self._model_fallback_warning("Insight generation fallback", exc))
 
         return self._recommendations(analysis, readme_summary), self._risk_observations(analysis, readme_summary)
+
+    def _model_fallback_warning(self, prefix: str, exc: Exception) -> str:
+        message = str(exc).strip()
+        normalized = message.lower()
+        if any(token in normalized for token in ("connection", "connect", "refused", "unreachable")):
+            reason = "connection unavailable"
+        elif "timeout" in normalized:
+            reason = "request timed out"
+        else:
+            reason = "model unavailable"
+        return f"{prefix}: {reason}. Used deterministic fallback."
 
     async def _select_readme_context(self, readme: str, analysis: dict) -> str:
         paragraphs = [paragraph.strip() for paragraph in readme.splitlines() if paragraph.strip()]

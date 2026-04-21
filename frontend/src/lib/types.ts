@@ -40,6 +40,7 @@ export type ResearchResponse = {
   status: "success" | "partial";
   data: ResearchData;
   warnings: string[];
+  rate_limit?: RateLimit;
 };
 
 export type DocumentationSection = {
@@ -56,8 +57,16 @@ export type DocumentationData = ResearchData & {
   risk_observations: string[];
 };
 
+export type RateLimit = {
+  remaining: number;
+  limit: number;
+  reset_unix_timestamp: number;
+  reset_in_seconds: number;
+};
+
 export type DocumentationResponse = {
   status: "success" | "partial";
   data: DocumentationData;
   warnings: string[];
+  rate_limit?: RateLimit;
 };

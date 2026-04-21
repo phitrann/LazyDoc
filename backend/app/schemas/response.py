@@ -50,10 +50,18 @@ class ResearchData(BaseModel):
     structure: Structure
 
 
+class RateLimit(BaseModel):
+    remaining: int
+    limit: int
+    reset_unix_timestamp: int
+    reset_in_seconds: int
+
+
 class ResearchSuccessResponse(BaseModel):
     status: Literal["success", "partial"]
     data: ResearchData
     warnings: list[str] = []
+    rate_limit: RateLimit | None = None
 
 
 class APIErrorResponse(BaseModel):
@@ -85,3 +93,4 @@ class DocumentationSuccessResponse(BaseModel):
     status: Literal["success", "partial"]
     data: DocumentationData
     warnings: list[str] = []
+    rate_limit: RateLimit | None = None

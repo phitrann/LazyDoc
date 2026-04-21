@@ -1,4 +1,4 @@
-import pytest
+import asyncio
 
 from app.core.cache import TTLCache
 from app.services.documentation_generator import DocumentationGenerator
@@ -52,13 +52,21 @@ class FakeLLMClient:
         return "This repository demonstrates the docs generator."
 
 
+class FailingLLMClient:
+    async def generate_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 512) -> str:
+        raise RuntimeError("Connection error.")
+
+    async def stream_text(self, system_prompt: str, user_prompt: str, max_tokens: int = 512):
+        if False:
+            yield ""
+
+
 class FakeEmbeddingClient:
     async def create_embedding(self, text: str) -> list[float]:
         return [float(len(text) % 7 + 1), float(len(text) % 5 + 1), 1.0]
 
 
-@pytest.mark.asyncio
-async def test_documentation_generator_builds_report() -> None:
+def test_documentation_generator_builds_report() -> None:
     generator = DocumentationGenerator(
         client=FakeGitHubClient(),
         analyzer=FakeAnalyzer(),
@@ -67,10 +75,26 @@ async def test_documentation_generator_builds_report() -> None:
         cache=TTLCache(ttl_seconds=60),
     )
 
-    result = await generator.generate("owner", "repo")
+    result = asyncio.run(generator.generate("owner", "repo"))
 
     assert result["overview"]["name"] == "repo"
     assert result["readme_summary"] is not None
     assert result["sections"][0]["title"] == "Repository Overview"
     assert "# repo Documentation Report" in result["markdown"]
     assert "Recommendations" in result["markdown"]
+
+
+def test_documentation_generator_uses_clean_fallback_warnings_for_model_connection_errors() -> None:
+    generator = DocumentationGenerator(
+        client=FakeGitHubClient(),
+        analyzer=FakeAnalyzer(),
+        llm_client=FailingLLMClient(),
+        embedding_client=FakeEmbeddingClient(),
+        cache=TTLCache(ttl_seconds=60),
+    )
+
+    result = asyncio.run(generator.generate("owner", "repo"))
+
+    warnings = result["warnings"]
+    assert "README summary model fallback: connection unavailable. Used deterministic fallback." in warnings
+    assert "Insight generation fallback: connection unavailable. Used deterministic fallback." in warnings

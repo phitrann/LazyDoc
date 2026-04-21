@@ -364,7 +364,7 @@
   gap: 6px;
 }
 
-.report-toc a {
+.toc-link {
   display: inline-block;
   text-decoration: none;
   color: var(--text-secondary);
@@ -372,12 +372,20 @@
   line-height: 1.4;
   border-radius: 8px;
   padding: 6px 8px;
-  transition: color 150ms ease, background-color 150ms ease;
+  border: 1px solid transparent;
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease;
 }
 
-.report-toc a:hover {
+.toc-link:hover {
   color: #1d4ed8;
   background: #eff6ff;
+}
+
+.toc-link.active {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  font-weight: 600;
 }
 
 .ai-legend {

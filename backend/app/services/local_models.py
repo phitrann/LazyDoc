@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import AsyncIterator
 
 
 def _async_openai_class():
@@ -28,6 +29,29 @@ class LocalLLMClient:
             },
         )
         return response.choices[0].message.content or ""
+
+    async def stream_text(self, system_prompt: str, user_prompt: str, max_tokens: int = 512) -> AsyncIterator[str]:
+        response = await self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=self._temperature,
+            max_tokens=max_tokens,
+            stream=True,
+            extra_body={
+                "top_k": 20,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+        async for chunk in response:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            content = getattr(delta, "content", None)
+            if isinstance(content, str) and content:
+                yield content
 
 
 class LocalEmbeddingClient:

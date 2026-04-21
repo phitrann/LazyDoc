@@ -20,6 +20,15 @@ class GitHubClient:
         }
         if token:
             self._headers["Authorization"] = f"Bearer {token}"
+        self.last_rate_limit: dict = {}
+
+    def set_token(self, token: str) -> None:
+        """Update the GitHub token (for user-provided PATs)."""
+        self._token = token
+        if token:
+            self._headers["Authorization"] = f"Bearer {token}"
+        else:
+            self._headers.pop("Authorization", None)
 
     async def _request(self, path: str, params: dict[str, str] | None = None) -> dict:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout, headers=self._headers) as client:
@@ -29,6 +38,9 @@ class GitHubClient:
                 raise APIError("GITHUB_TIMEOUT", "GitHub request timed out.", 504) from exc
             except httpx.RequestError as exc:
                 raise APIError("GITHUB_UNAVAILABLE", "GitHub request failed.", 502) from exc
+        
+        self._extract_rate_limit(response)
+        
         if response.status_code == 404:
             raise APIError("REPOSITORY_NOT_FOUND", "Repository not found.", 404)
         if response.status_code == 403:
@@ -44,6 +56,26 @@ class GitHubClient:
         if response.is_error:
             raise APIError("GITHUB_ERROR", "GitHub API request failed.", 502)
         return response.json()
+
+    def _extract_rate_limit(self, response: httpx.Response) -> None:
+        """Extract and store rate-limit info from response headers."""
+        remaining = response.headers.get("x-ratelimit-remaining")
+        limit = response.headers.get("x-ratelimit-limit")
+        reset = response.headers.get("x-ratelimit-reset")
+        
+        if remaining and limit and reset and all(s.isdigit() for s in [remaining, limit, reset]):
+            reset_unix = int(reset)
+            reset_seconds = max(int(reset_unix) - int(datetime.now(tz=timezone.utc).timestamp()), 0)
+            self.last_rate_limit = {
+                "remaining": int(remaining),
+                "limit": int(limit),
+                "reset_unix_timestamp": reset_unix,
+                "reset_in_seconds": reset_seconds,
+            }
+
+    def get_rate_limit(self) -> dict | None:
+        """Return last observed rate-limit info, or None if never seen."""
+        return self.last_rate_limit if self.last_rate_limit else None
 
     def _retry_after_seconds(self, response: httpx.Response) -> int | None:
         retry_after = response.headers.get("retry-after")

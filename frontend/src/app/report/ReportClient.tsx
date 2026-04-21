@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { GitHubPatInput } from "@/components/GitHubPatInput";
 import { MetricCard } from "@/components/MetricCard";
+import { RateLimitBanner } from "@/components/RateLimitBanner";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBanner } from "@/components/StatusBanner";
-import { generateDocumentation } from "@/lib/api";
-import type { DocumentationResponse } from "@/lib/types";
+import { generateDocumentation, streamDocumentationAiSection } from "@/lib/api";
+import type { DocumentationResponse, RateLimit } from "@/lib/types";
 
 const defaultRepository = "https://github.com/phitrann/LazyDoc";
 
@@ -22,6 +24,10 @@ export function ReportClient() {
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<DocumentationResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const [activeTocId, setActiveTocId] = useState("repository-overview");
+  const [aiStreaming, setAiStreaming] = useState(false);
+  const [aiStreamingStatus, setAiStreamingStatus] = useState<string | null>(null);
+  const [githubToken, setGithubToken] = useState<string | null>(null);
 
   async function loadReport(targetRepository: string, forceRegenerate = false) {
     const trimmed = targetRepository.trim();
@@ -34,7 +40,7 @@ export function ReportClient() {
     setCopied(false);
 
     try {
-      const result = await generateDocumentation(trimmed, forceRegenerate);
+      const result = await generateDocumentation(trimmed, forceRegenerate, githubToken ?? undefined);
       setReport(result);
     } catch (caughtError) {
       setReport(null);
@@ -63,7 +69,97 @@ export function ReportClient() {
   }
 
   async function handleRegenerateAiContent() {
-    await loadReport(repositoryUrl, true);
+    const trimmed = repositoryUrl.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setAiStreaming(true);
+    setAiStreamingStatus("Preparing AI section...");
+    setError(null);
+    setReport((previous) => {
+      if (!previous) {
+        return previous;
+      }
+      return {
+        ...previous,
+        data: {
+          ...previous.data,
+          readme_summary: "",
+          recommendations: [],
+          risk_observations: [],
+        },
+      };
+    });
+
+    try {
+      await streamDocumentationAiSection(trimmed, true, {
+        onStage: (_stage, message) => {
+          setAiStreamingStatus(message);
+        },
+        onToken: (field, token) => {
+          if (field !== "readme_summary") {
+            return;
+          }
+          setReport((previous) => {
+            if (!previous) {
+              return previous;
+            }
+            return {
+              ...previous,
+              data: {
+                ...previous.data,
+                readme_summary: `${previous.data.readme_summary ?? ""}${token}`,
+              },
+            };
+          });
+        },
+        onUpdate: (update) => {
+          setReport((previous) => {
+            if (!previous) {
+              return previous;
+            }
+            return {
+              ...previous,
+              data: {
+                ...previous.data,
+                readme_summary: update.readme_summary ?? previous.data.readme_summary,
+                recommendations: update.recommendations ?? previous.data.recommendations,
+                risk_observations: update.risk_observations ?? previous.data.risk_observations,
+              },
+            };
+          });
+        },
+        onComplete: (update) => {
+          setReport((previous) => {
+            if (!previous) {
+              return previous;
+            }
+            return {
+              ...previous,
+              status: (update.warnings?.length ? "partial" : "success") as "success" | "partial",
+              warnings: update.warnings ?? [],
+              data: {
+                ...previous.data,
+                readme_summary: update.readme_summary ?? previous.data.readme_summary,
+                recommendations: update.recommendations ?? previous.data.recommendations,
+                risk_observations: update.risk_observations ?? previous.data.risk_observations,
+                sections: update.sections ?? previous.data.sections,
+                markdown: update.markdown ?? previous.data.markdown,
+              },
+            };
+          });
+        },
+      }, githubToken ?? undefined);
+      setAiStreamingStatus("AI section updated.");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Something went wrong.");
+    } finally {
+      setAiStreaming(false);
+      setTimeout(() => {
+        setAiStreamingStatus(null);
+      }, 1500);
+    }
   }
 
   useEffect(() => {
@@ -82,7 +178,7 @@ export function ReportClient() {
   const activity = report?.data.activity;
   const structure = report?.data.structure;
   const hasDocumentationIntelligence = Boolean(
-    report?.data.readme_summary || report?.data.recommendations.length || report?.data.risk_observations.length
+    aiStreaming || report?.data.readme_summary || report?.data.recommendations.length || report?.data.risk_observations.length
   );
   const hasGeneratedSections = Boolean(report?.data.sections.length);
 
@@ -98,6 +194,48 @@ export function ReportClient() {
     ],
     [hasDocumentationIntelligence, hasGeneratedSections]
   );
+
+  useEffect(() => {
+    const sections = tocItems
+      .map((item) => document.getElementById(item.id))
+      .filter((element): element is HTMLElement => Boolean(element));
+
+    if (!sections.length) {
+      return;
+    }
+
+    setActiveTocId(sections[0].id);
+
+    const visibleRatios = new Map<string, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          visibleRatios.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
+        }
+
+        const mostVisible = [...visibleRatios.entries()]
+          .filter(([, ratio]) => ratio > 0)
+          .sort((left, right) => right[1] - left[1])[0];
+
+        if (mostVisible) {
+          setActiveTocId(mostVisible[0]);
+        }
+      },
+      {
+        root: null,
+        rootMargin: "-20% 0px -55% 0px",
+        threshold: [0, 0.15, 0.35, 0.6, 1],
+      }
+    );
+
+    for (const section of sections) {
+      observer.observe(section);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [tocItems, report]);
 
   return (
     <div className="report-shell">
@@ -139,6 +277,10 @@ export function ReportClient() {
             </div>
           </form>
 
+          <GitHubPatInput onTokenChange={setGithubToken} disabled={loading} />
+
+          {report?.rate_limit && <RateLimitBanner rateLimit={report.rate_limit} hasGithubToken={!!githubToken} />}
+
           {error ? <StatusBanner kind="error" message={error} /> : null}
           {report?.warnings?.length ? <StatusBanner kind="warning" message={report.warnings.join(" ")} /> : null}
           {copied ? <StatusBanner kind="warning" message="Markdown copied to clipboard." /> : null}
@@ -151,7 +293,14 @@ export function ReportClient() {
               <ul>
                 {tocItems.map((item) => (
                   <li key={item.id}>
-                    <a href={`#${item.id}`}>{item.label}</a>
+                    <a
+                      href={`#${item.id}`}
+                      className={activeTocId === item.id ? "toc-link active" : "toc-link"}
+                      onClick={() => setActiveTocId(item.id)}
+                      aria-current={activeTocId === item.id ? "location" : undefined}
+                    >
+                      {item.label}
+                    </a>
                   </li>
                 ))}
               </ul>
@@ -220,10 +369,11 @@ export function ReportClient() {
                 badges={["AI-generated"]}
               >
                 <div className="ai-actions">
-                  <button type="button" onClick={handleRegenerateAiContent} disabled={loading}>
-                    {loading ? "Re-generating..." : "Re-generate AI content"}
+                  <button type="button" onClick={handleRegenerateAiContent} disabled={loading || aiStreaming}>
+                    {aiStreaming ? "Streaming AI update..." : loading ? "Re-generating..." : "Re-generate AI content"}
                   </button>
                 </div>
+                {aiStreamingStatus ? <p className="section-note">{aiStreamingStatus}</p> : null}
                 {report.data.readme_summary ? <p className="section-note">README summary: {report.data.readme_summary}</p> : null}
                 {report.data.recommendations.length ? (
                   <div className="content-list">

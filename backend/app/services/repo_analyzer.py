@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timezone, timedelta
 
 from app.core.cache import TTLCache
+from app.core.dedupe import get_dedupe
 from app.schemas.error import APIError
 from app.services.github_client import GitHubClient
 
@@ -12,12 +13,21 @@ class RepoAnalyzer:
     def __init__(self, client: GitHubClient, cache: TTLCache[dict]) -> None:
         self._client = client
         self._cache = cache
+        self._dedupe = get_dedupe()
 
     async def analyze(self, owner: str, repo: str) -> dict:
         cache_key = f"{owner}/{repo}"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
+
+        # Deduplicate concurrent requests for the same repo
+        async def do_analyze() -> dict:
+            return await self._do_analyze_uncached(cache_key, owner, repo)
+
+        return await self._dedupe.dedupe(cache_key, do_analyze)
+
+    async def _do_analyze_uncached(self, cache_key: str, owner: str, repo: str) -> dict:
 
         warnings: list[str] = []
         repository = await self._client.get_repository(owner, repo)
