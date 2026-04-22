@@ -21,7 +21,7 @@ def get_analyzer() -> RepoAnalyzer:
             base_url=settings.github_api_base_url,
             user_agent=settings.github_user_agent,
         )
-        _analyzer = RepoAnalyzer(client=client, cache=_cache)
+        _analyzer = RepoAnalyzer(client=client, cache=_cache, llm_client=get_llm_client())
     return _analyzer
 
 

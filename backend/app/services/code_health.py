@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections import Counter, defaultdict
 from pathlib import PurePosixPath
 
 from app.services.github_client import GitHubClient
+from app.services.local_models import LocalLLMClient
 
 
 class CodeHealthAnalyzer:
@@ -56,8 +58,9 @@ class CodeHealthAnalyzer:
 
     TODO_PATTERNS = (re.compile(r"\b(TODO|FIXME|XXX)\b"),)
 
-    def __init__(self, client: GitHubClient) -> None:
+    def __init__(self, client: GitHubClient, llm_client: LocalLLMClient | None = None) -> None:
         self._client = client
+        self._llm_client = llm_client
 
     async def analyze(
         self,
@@ -100,6 +103,15 @@ class CodeHealthAnalyzer:
         score, breakdown = self._score_and_breakdown(findings, circular_dependencies, coupling_index, orphan_file_percent)
         grade = self._grade(score)
 
+        # Generate LLM-enhanced insights if LLM client is available
+        llm_insights = None
+        if self._llm_client and findings:
+            try:
+                primary_language = self._detect_primary_language(scanned_paths)
+                llm_insights = await self._generate_llm_insights(findings, primary_language=primary_language)
+            except Exception as exc:
+                warnings.append(f"LLM insight generation failed: {str(exc)}")
+
         return {
             "grade": grade,
             "score": score,
@@ -119,7 +131,8 @@ class CodeHealthAnalyzer:
                 "orphan_file_percent": orphan_file_percent,
             },
             "breakdown": breakdown,
-            "findings": findings[:8],
+            "findings": findings,
+            "llm_insights": llm_insights,
             "warnings": warnings,
         }
 
@@ -497,6 +510,98 @@ class CodeHealthAnalyzer:
             return f"Code health looks solid overall. The repository scored {score}/100 ({grade}) with no high-risk findings detected."
         cycle_text = "No circular dependencies detected" if circular_dependencies == 0 else f"{circular_dependencies} circular dependency signal(s) detected"
         return f"Code health scored {score}/100 ({grade}) with {finding_count} finding(s). {cycle_text}."
+
+    def _detect_primary_language(self, scanned_paths: set[str]) -> str:
+        """Detect primary programming language from file extensions."""
+        language_map = {
+            ".py": "python",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".go": "go",
+            ".rs": "rust",
+            ".java": "java",
+            ".rb": "ruby",
+            ".php": "php",
+            ".cs": "csharp",
+        }
+        extension_counts: dict[str, int] = Counter()
+        for path in scanned_paths:
+            suffix = PurePosixPath(path).suffix.lower()
+            if suffix in language_map:
+                extension_counts[suffix] += 1
+        
+        if extension_counts:
+            most_common_ext = max(extension_counts, key=extension_counts.get)
+            return language_map.get(most_common_ext, "unknown")
+        return "unknown"
+
+    async def _generate_llm_insights(self, findings: list[dict], primary_language: str = "unknown") -> dict | None:
+        """Generate LLM-enhanced insights for top findings."""
+        if not self._llm_client or not findings:
+            return None
+
+        # Select top 5 findings by severity for LLM analysis
+        severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        sorted_findings = sorted(findings, key=lambda f: (severity_order.get(f["severity"], 4), f["file_path"]))
+        top_findings = sorted_findings[:5]
+
+        # Create prompt for LLM to rank and explain findings
+        system_prompt = """You are a code quality expert analyzing software findings. Your task is to:
+1. Re-rank the provided findings by actual business impact and risk severity (not just heuristic severity)
+2. Provide a concise context-aware explanation for each finding
+3. Suggest specific remediation steps
+4. Identify if any findings are false positives or low-priority
+
+Respond with a JSON object containing:
+{
+  "ranked_findings": [
+    {
+      "id": "original finding id",
+      "impact_priority": 1-5 (1=highest impact),
+      "business_context": "explanation of why this matters in context",
+      "remediation_steps": ["step 1", "step 2", ...],
+      "is_false_positive": boolean,
+      "automation_opportunity": "tool/script to fix this automatically" or null
+    }
+  ],
+  "executive_summary": "2-3 sentence summary of the most critical issues"
+}"""
+
+        findings_text = json.dumps(
+            [
+                {
+                    "id": f["id"],
+                    "category": f["category"],
+                    "severity": f["severity"],
+                    "file_path": f["file_path"],
+                    "line": f["line"],
+                    "message": f["message"],
+                    "suggestion": f["suggestion"],
+                    "evidence": f["evidence"],
+                }
+                for f in top_findings
+            ],
+            indent=2,
+        )
+
+        user_prompt = f"""Analyze these {len(top_findings)} code health findings from a {primary_language} repository:
+
+{findings_text}
+
+Rank them by actual business impact and provide context-aware remediation guidance."""
+
+        try:
+            response = await self._llm_client.generate_json(system_prompt, user_prompt, max_tokens=1024)
+            llm_data = json.loads(response)
+            return {
+                "ranked_findings": llm_data.get("ranked_findings", []),
+                "executive_summary": llm_data.get("executive_summary", ""),
+                "source": "llm",
+            }
+        except (json.JSONDecodeError, KeyError, AttributeError):
+            return None
 
     def _finding(
         self,

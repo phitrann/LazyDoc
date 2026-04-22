@@ -8,14 +8,15 @@ from app.core.dedupe import get_dedupe
 from app.schemas.error import APIError
 from app.services.code_health import CodeHealthAnalyzer
 from app.services.github_client import GitHubClient, github_cache_scope
+from app.services.local_models import LocalLLMClient
 
 
 class RepoAnalyzer:
-    def __init__(self, client: GitHubClient, cache: TTLCache[dict]) -> None:
+    def __init__(self, client: GitHubClient, cache: TTLCache[dict], llm_client: LocalLLMClient | None = None) -> None:
         self._client = client
         self._cache = cache
         self._dedupe = get_dedupe()
-        self._code_health = CodeHealthAnalyzer(client)
+        self._code_health = CodeHealthAnalyzer(client, llm_client=llm_client)
 
     async def analyze(self, owner: str, repo: str, github_token: str | None = None) -> dict:
         cache_key = self._cache_key(owner, repo, github_token)

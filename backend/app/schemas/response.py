@@ -43,6 +43,21 @@ class Structure(BaseModel):
     top_directories: list[str] = []
 
 
+class LLMRankedFinding(BaseModel):
+    id: str
+    impact_priority: int
+    business_context: str
+    remediation_steps: list[str] = []
+    is_false_positive: bool = False
+    automation_opportunity: str | None = None
+
+
+class LLMInsights(BaseModel):
+    ranked_findings: list[LLMRankedFinding] = []
+    executive_summary: str = ""
+    source: str = "llm"
+
+
 class ResearchData(BaseModel):
     overview: Overview
     insights: Insights
