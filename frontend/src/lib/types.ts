@@ -82,6 +82,21 @@ export type CodeHealthFinding = {
   why_it_matters: string;
 };
 
+export type LLMRankedFinding = {
+  id: string;
+  impact_priority: number;
+  business_context: string;
+  remediation_steps: string[];
+  is_false_positive: boolean;
+  automation_opportunity: string | null;
+};
+
+export type LLMInsights = {
+  ranked_findings: LLMRankedFinding[];
+  executive_summary: string;
+  source: string;
+};
+
 export type CodeHealth = {
   grade: "A" | "B" | "C" | "D" | "F" | "N/A";
   score: number;
@@ -107,6 +122,7 @@ export type CodeHealth = {
     drivers: string[];
   }>;
   findings: CodeHealthFinding[];
+  llm_insights?: LLMInsights | null;
   warnings?: string[];
 };
 

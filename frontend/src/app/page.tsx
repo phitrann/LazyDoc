@@ -55,9 +55,56 @@ const fallbackTrendingRepos: TrendingRepository[] = [
 export default function HomePage() {
   const router = useRouter();
   const [repositoryUrl, setRepositoryUrl] = useState("https://github.com/phitrann/LazyDoc");
+  const [urlError, setUrlError] = useState<string | null>(null);
   const [trendingRepos, setTrendingRepos] = useState<TrendingRepository[]>(fallbackTrendingRepos);
   const [isTrendingLoading, setIsTrendingLoading] = useState(true);
   const [trendingError, setTrendingError] = useState<string | null>(null);
+
+  // Validate GitHub repository URL
+  const validateRepositoryUrl = (url: string): { valid: boolean; error: string | null } => {
+    const trimmed = url.trim();
+    
+    if (!trimmed) {
+      return { valid: false, error: "Please enter a repository URL" };
+    }
+
+    // Check if it's a valid URL format
+    try {
+      const urlObj = new URL(trimmed);
+      
+      // Must be github.com
+      if (!urlObj.hostname.includes("github.com")) {
+        return { valid: false, error: "Must be a GitHub repository URL" };
+      }
+
+      // Must have at least owner/repo format
+      const pathParts = urlObj.pathname.split("/").filter(p => p);
+      if (pathParts.length < 2) {
+        return { valid: false, error: "URL must include owner and repository name (e.g., owner/repo)" };
+      }
+
+      // Validate owner and repo names (alphanumeric, hyphens, dots, underscores)
+      const owner = pathParts[0];
+      const repo = pathParts[1].replace(".git", "");
+      
+      const nameRegex = /^[a-zA-Z0-9._-]+$/;
+      if (!nameRegex.test(owner)) {
+        return { valid: false, error: "Invalid repository owner name" };
+      }
+      if (!nameRegex.test(repo)) {
+        return { valid: false, error: "Invalid repository name" };
+      }
+
+      return { valid: true, error: null };
+    } catch {
+      return { valid: false, error: "Invalid URL format" };
+    }
+  };
+
+  const isUrlValid = useMemo(() => {
+    const { valid } = validateRepositoryUrl(repositoryUrl);
+    return valid;
+  }, [repositoryUrl]);
 
   useEffect(() => {
     let isMounted = true;
@@ -101,11 +148,15 @@ export default function HomePage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmed = repositoryUrl.trim();
-    if (!trimmed) {
+    const { valid, error } = validateRepositoryUrl(repositoryUrl);
+    
+    if (!valid) {
+      setUrlError(error);
       return;
     }
-    router.push(`/report?repo=${encodeURIComponent(trimmed)}`);
+    
+    setUrlError(null);
+    router.push(`/report?repo=${encodeURIComponent(repositoryUrl.trim())}`);
   }
 
   return (
@@ -115,9 +166,6 @@ export default function HomePage() {
           <div className="brand">LazyDoc</div>
           <div className="nav-meta">
             <p>Repository research for technical due diligence</p>
-            <button type="submit" form="landing-search-form">
-              Research
-            </button>
           </div>
         </div>
       </header>
@@ -126,12 +174,22 @@ export default function HomePage() {
         <section className="hero-search">
           <h1>Which GitHub repository should LazyDoc research?</h1>
           <form id="landing-search-form" className="hero-search-form" onSubmit={handleSubmit}>
-            <input
-              type="url"
-              value={repositoryUrl}
-              onChange={(event) => setRepositoryUrl(event.target.value)}
-              placeholder="Paste a public repository URL"
-            />
+            <div className="search-row">
+              <input
+                type="url"
+                value={repositoryUrl}
+                onChange={(event) => {
+                  setRepositoryUrl(event.target.value);
+                  setUrlError(null);
+                }}
+                placeholder="Paste a public repository URL"
+                className={urlError ? "error" : ""}
+              />
+              <button type="submit" disabled={!isUrlValid}>
+                Research
+              </button>
+            </div>
+            {urlError ? <p className="error-message">{urlError}</p> : null}
           </form>
         </section>
 

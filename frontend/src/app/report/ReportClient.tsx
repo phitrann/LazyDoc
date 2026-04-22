@@ -595,6 +595,48 @@ export function ReportClient() {
                 ) : (
                   <p className="section-note">No code health risks were found in the scanned source files.</p>
                 )}
+                
+                {codeHealth?.llm_insights?.ranked_findings && codeHealth.llm_insights.ranked_findings.length > 0 ? (
+                  <div className="llm-insights-section">
+                    <h3>AI-Powered Code Health Analysis</h3>
+                    {codeHealth.llm_insights.executive_summary ? (
+                      <p className="llm-executive-summary">{codeHealth.llm_insights.executive_summary}</p>
+                    ) : null}
+                    <div className="llm-ranked-findings">
+                      {codeHealth.llm_insights.ranked_findings.map((rankedFinding) => (
+                        <details key={rankedFinding.id} className="llm-finding-card">
+                          <summary className="llm-finding-summary">
+                            <span className="llm-priority-badge">{rankedFinding.impact_priority}</span>
+                            <span className="llm-finding-id">{rankedFinding.id}</span>
+                            {rankedFinding.is_false_positive ? <span className="llm-badge fp">False Positive</span> : null}
+                          </summary>
+                          <div className="llm-finding-details">
+                            <div className="llm-finding-context">
+                              <h4>Business Context</h4>
+                              <p>{rankedFinding.business_context}</p>
+                            </div>
+                            {rankedFinding.remediation_steps?.length ? (
+                              <div className="llm-finding-remediation">
+                                <h4>Remediation Steps</h4>
+                                <ol>
+                                  {rankedFinding.remediation_steps.map((step, idx) => (
+                                    <li key={idx}>{step}</li>
+                                  ))}
+                                </ol>
+                              </div>
+                            ) : null}
+                            {rankedFinding.automation_opportunity ? (
+                              <div className="llm-finding-automation">
+                                <h4>Automation Opportunity</h4>
+                                <p>{rankedFinding.automation_opportunity}</p>
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </SectionCard>
             ) : null}
 
