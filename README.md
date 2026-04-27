@@ -1,15 +1,25 @@
 # LazyDoc
 
-LazyDoc is a GitHub repository research tool built for the exercise in [docs/GTLC Technical Exercise - GitHub Repository.pdf](docs/GTLC%20Technical%20Exercise%20-%20GitHub%20Repository.pdf). It combines a FastAPI backend with a Next.js frontend to turn a public GitHub repository URL into a readable technical report.
+**Instantly generate AI-powered technical reports for any GitHub repository.**
 
-The current application covers the exercise baseline and several bonus behaviors:
-- Repository overview, project insights, activity, and structure reporting
-- README summarization plus AI-generated recommendations and risk observations
-- GitHub PAT support with rate-limit visibility
-- Heuristic code-health scoring and findings
-- Rendered markdown output and copy-to-clipboard support
-- Landing page with a featured repo and trending repository suggestions
-- Streamed AI regeneration for individual report sections
+LazyDoc is an intelligent repository analysis engine that transforms any public GitHub URL into a comprehensive technical report. Get instant insights on code health, architecture, documentation quality, and more—without reading thousands of lines of code.
+
+[![Deploy to Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/phitrann/LazyDoc)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![Node.js](https://img.shields.io/badge/node.js-18%2B-green)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
+![Next.js](https://img.shields.io/badge/Next.js-14.2-black)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
+The current application includes:
+- **Repository Overview** – Stars, forks, license, age, and key metadata at a glance
+- **Code Health Scoring** – Heuristic analysis for security risks, code patterns, and architecture signals
+- **Activity & Trends** – Commit frequency, contributor velocity, and project momentum
+- **Project Structure** – Directory analysis, language breakdown, and dependency detection
+- **AI-Generated Insights** – Recommendations and risk observations powered by LLMs
+- **README Intelligence** – Automatic README summarization and documentation analysis
+- **Rate-Limit Visibility** – GitHub API quota tracking with authenticated PAT support
+- **Live Report Regeneration** – Stream individual sections for real-time report updates
 
 ## Screenshots
 
@@ -21,34 +31,45 @@ The current application covers the exercise baseline and several bonus behaviors
 
 ![LazyDoc report page](docs/screenshots/report-page.png)
 
-## What the app does
+## How it works
 
-1. The user enters a public GitHub repository URL on the landing page or report page.
-2. The frontend calls a Next.js proxy route.
-3. The proxy forwards the request to FastAPI and passes through `X-GitHub-Token` when the user provides a PAT.
-4. The backend validates the URL, fetches repository metadata from GitHub, normalizes the results, computes heuristic code-health signals, and generates documentation-oriented output.
-5. The report UI renders overview metrics, AI sections, code-health findings, rate-limit information, and generated markdown.
+LazyDoc runs a multi-stage analysis pipeline on any public GitHub repository:
+
+1. **URL Input** – Paste a GitHub repository URL on the landing page
+2. **Repository Fetch** – Pull metadata, commit history, contributors, and code samples
+3. **Code Analysis** – Scan for security patterns, architecture signals, and code health metrics
+4. **AI Enrichment** – Generate insights, recommendations, and risk observations
+5. **Report Generation** – Compile findings into a readable, sectioned technical report
+6. **Stream & Share** – View live results, regenerate specific sections, and export as markdown
+
+Perfect for due diligence, technical hiring, dependency evaluation, or quick repository assessment.
+
+## Use Cases
+
+- 🔍 **Tech Due Diligence** – Evaluate open-source dependencies before integrating them
+- 💼 **Technical Hiring** – Assess candidate projects and code health during interviews
+- 📊 **Repository Benchmarking** – Compare similar projects across code quality and activity
+- 🛡️ **Security Assessment** – Identify potential risks and antipatterns in unfamiliar codebases
+- 📚 **Documentation Review** – Get quick summaries of large or poorly-documented projects
+- 🚀 **Startup Evaluation** – Analyze early-stage open-source projects for potential
 
 ## Feature summary
 
-### Implemented report sections
+### Core Analysis
 - Repository Overview
 - Project Insights
 - Activity & Health
 - Structure Summary
-- Code Health
+- Code Health Scoring
 - Documentation Intelligence
 - Generated Markdown
 
-### Implemented UX and reliability features
+### UX & Reliability
 - PAT input with authenticated GitHub forwarding
 - Rate-limit banner with remaining quota and reset timing
 - Partial-success warnings and normalized backend error payloads
 - In-memory TTL caching on the backend
-- Targeted AI section regeneration for:
-  - `readme_summary`
-  - `recommendations`
-  - `risk_observations`
+- Targeted AI section regeneration for readme summary, recommendations, and risk observations
 - Streaming README-summary tokens during regeneration
 - Markdown rendering for generated content
 - Copy markdown action for reuse in documentation workflows
@@ -126,38 +147,48 @@ Known limitations:
 - It does not parse full language ASTs
 - Findings are heuristic and should be treated as advisory, not authoritative security results
 
-## Running the project
+## Getting Started
 
-### Backend
+### Try Online (No Setup Required)
+Visit the live deployment at: **[LazyDoc on Vercel](https://frontend-5qv42b9ls-foxxyhcmus-projects.vercel.app)**
+
+### Run Locally
+
+**Prerequisites:** Python 3.9+, Node.js 18+
 
 ```bash
+# Clone the repository
+git clone https://github.com/phitrann/LazyDoc.git
+cd LazyDoc
+
+# Install dependencies and start backend
 cd backend
-python -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8992
-```
+uvicorn app.main:app --reload --port 8992
 
-### Frontend
-
-```bash
-cd frontend
+# In another terminal, start frontend
+cd ../frontend
 npm install
 npm run dev
 ```
 
-### Makefile shortcuts
+Visit `http://localhost:3000` and paste a GitHub URL to generate a report.
 
-From the repository root:
+### Deploy to Vercel
 
 ```bash
-make install
-make backend
-make frontend
-make dev
-make test
-make build-frontend
+# Deploy backend
+cd backend
+vercel deploy --prod
+
+# Deploy frontend
+cd ../frontend
+BACKEND_URL="<your-backend-url>" # From previous step
+echo "$BACKEND_URL" | vercel env add BACKEND_INTERNAL_URL production
+vercel deploy --prod
 ```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment steps.
 
 ## Environment variables
 
