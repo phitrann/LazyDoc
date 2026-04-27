@@ -4,7 +4,6 @@
 
 LazyDoc is an intelligent repository analysis engine that transforms any public GitHub URL into a comprehensive technical report. Get instant insights on code health, architecture, documentation quality, and more—without reading thousands of lines of code.
 
-[![Deploy to Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/phitrann/LazyDoc)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Node.js](https://img.shields.io/badge/node.js-18%2B-green)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
