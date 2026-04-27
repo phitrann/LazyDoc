@@ -1,5 +1,7 @@
 {
   "version": 2,
-  "root": "frontend"
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/.next"
 }
+
 
